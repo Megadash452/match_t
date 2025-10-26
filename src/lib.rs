@@ -1,4 +1,5 @@
-// TODO: document crate
+#![doc = include_str!("../README.md")]
+
 use proc_macro2::{Punct, Span, TokenStream};
 use quote::{ToTokens, TokenStreamExt as _, quote, quote_spanned};
 use syn::{
