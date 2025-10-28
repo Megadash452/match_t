@@ -8,6 +8,7 @@ pub fn type_of_tokens(ty: &Type) -> TokenStream {
     quote_spanned! {ty.span()=> ::std::any::TypeId::of::<#ty>() }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn append_if_statement(
     if_span: Span,
     else_span: Option<Span>,
@@ -19,7 +20,7 @@ pub fn append_if_statement(
     tokens: &mut TokenStream,
 ) {
     // Can't output a first `if` statement if caller is requesting all `else-if` statements.
-    let mut is_first = !else_span.is_some();
+    let mut is_first = else_span.is_none();
     // Wy closure behaving weird and capturing tokens forever? :/
     fn append_if_tokens(
         is_first: &mut bool,

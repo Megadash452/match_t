@@ -37,9 +37,7 @@ enum MetaToken {
 }
 impl MetaExpr {
     pub fn metavar_name(&self) -> Option<&str> {
-        self.metavar_name
-            .as_ref()
-            .map(|s| s.as_str())
+        self.metavar_name.as_deref()
     }
 
     /// Converts all tokens in a [`TokenStream`] into [`MetaToken`].
@@ -84,14 +82,14 @@ impl MetaExpr {
 
                         match &metavar_name {
                             Some(name) => if ident == name {
-                                return Err(multiple_metavar_names_error(&name, &ident.to_string(), ident.span()));
+                                return Err(multiple_metavar_names_error(name, &ident.to_string(), ident.span()));
                             },
                             _ => metavar_name = Some(ident.to_string()),
                         }
 
                         tokens.push(MetaToken::MetaVar {
                             _dollar: syn::parse2(punct.to_token_stream()).unwrap(),
-                            t: ident.into(),
+                            t: ident,
                         });
                     }
                     // Did not match a metavariable, rerun iteration with this new token

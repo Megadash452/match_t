@@ -98,10 +98,10 @@ impl Display for Match {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "match {t} {{", t = self.t.to_token_stream())?;
         for arm in &self.arms {
-            writeln!(f, "\t{case} => {{ {body} }},", case = arm.case, body = arm.body.to_string())?;
+            writeln!(f, "\t{case} => {{ {body} }},", case = arm.case, body = arm.body)?;
         }
         if let Some((_, expr)) = &self.default_case_arm {
-            writeln!(f, "\t_ => {expr}", expr = expr.to_token_stream().to_string())?;
+            writeln!(f, "\t_ => {expr}", expr = expr.to_token_stream())?;
         }
         write!(f, "\n}}")
     }

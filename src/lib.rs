@@ -45,6 +45,7 @@ use syn::parse::{Parse, ParseStream};
 /// With `if-else` statement:
 /// ```
 /// # use match_t::match_t;
+/// # use std::any::Any;
 /// fn my_fn<T: Any>() {
 ///     match_t! {
 ///         if T is bool | char | u8 | u32 | u64 | usize | u128 {
@@ -61,6 +62,7 @@ use syn::parse::{Parse, ParseStream};
 /// With `match` statement:
 /// ```
 /// # use match_t::match_t;
+/// # use std::any::Any;
 /// fn my_fn<T: Any>() {
 ///     match_t! {
 ///         match T {
