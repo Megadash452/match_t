@@ -17,13 +17,13 @@ use syn::parse::{Parse, ParseStream};
 /// This is essentially an `if/match` statement for *generic types*.
 /// Callers can use `match` with `T` as the *input* and the *cases* are **concrete types**.
 /// Callers can also use `if-else` statements with the `is` meta-keyword.
-/// 
+///
 /// ## Metavariable
 ///
 /// Blocks of code are given the metavariable `$T`.
 /// The `T` in this case is the same *generic type* that was passed in.
 /// The metavariable resolves to the **concrete type** that matched with the type of `T`.
-/// 
+///
 /// The metavariable is not available within the `else` block of the *`if`` statement*,
 /// or within the *default/catch-all* (`_`) arm of the *`match` statement*.
 ///

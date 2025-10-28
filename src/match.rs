@@ -1,22 +1,25 @@
 use super::*;
-use crate::{common::Condition, meta_expr::{MetaBlock, MetaExpr}};
-use quote::{TokenStreamExt as _, quote, quote_spanned};
-use syn::{Token, Type, braced, spanned::Spanned as _, token::Brace};
+use crate::{
+    common::{Condition, append_if_statement},
+    meta_expr::MetaExpr,
+};
+use quote::TokenStreamExt as _;
+use syn::{Expr, Token, Type, braced, spanned::Spanned as _, token::Brace};
 
 pub struct Match {
     match_token: Token![match],
     t: Type,
     braces: Brace,
     arms: Vec<MatchArm>,
-    default_case_arm: Option<(Token![=>], MetaExpr)>,
+    default_case_arm: Option<(Token![=>], Expr)>,
 }
 impl Parse for Match {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let match_token = input.parse()?;
-        let t = input.parse()?;
+        let t = input.parse::<Type>()?;
         let match_body;
         let braces = braced!(match_body in input);
-        let mut arms = Vec::<MatchArm>::new();
+        let mut arms = Vec::new();
         let mut default_case_arm = None;
 
         while !match_body.is_empty() {
@@ -31,17 +34,26 @@ impl Parse for Match {
 
                 // default_case must also be the LAST case
                 if !match_body.is_empty() {
-                    return Err(match_body
-                        .error("Unexpected tokens: Default case must be the last case"));
+                    return Err(match_body.error("Unexpected tokens: Default case must be the last case"));
                 }
 
                 break;
             }
+
             // Parse normal case
-            arms.push(match_body.parse()?);
+            let arm = match_body.parse::<MatchArm>()?;
+            // The metavariables in the body must match the Type named by the user
+            if let Some(name) = arm.body.metavar_name() {
+                let t_str = t.to_token_stream().to_string();
+                if name != t_str {
+                    return Err(syn::Error::new(t.span(), format!("The metavariables (${name}) must match the generic type provided ({t_str}).")));
+                }
+            }
+
+            arms.push(arm);
         }
 
-         if !input.is_empty() {
+        if !input.is_empty() {
             return Err(input.error("Unexpected tokens: 'match' only has 1 body; no other expressions are allowed"));
         }
 
@@ -56,25 +68,29 @@ impl Parse for Match {
 }
 impl ToTokens for Match {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let if_token = quote_spanned!(self.match_token.span()=> if);
-        let else_token = quote_spanned!(self.match_token.span()=> else);
-
-        for (i, arm) in self.arms.iter().enumerate() {
-            // First arm's condition gets `if`, all other arms get `if-else`
-            if i == 0 {
-                if_token.to_tokens(tokens);
-            } else {
-                tokens.append_all(quote!(#if_token #else_token))
-            }
-
-            arm.case.to_tokens(&self.t, arm.arrow_token.span(), tokens);
-            arm.body.to_tokens(&self.braces, tokens);
+        for arm in self.arms.iter() {
+            let braces = match &arm.braces {
+                Some(braces) => braces,
+                None => &self.braces,
+            };
+            append_if_statement(
+                self.match_token.span(),
+                None,
+                &self.t,
+                arm.arrow_token.span(),
+                &arm.case,
+                braces,
+                &arm.body,
+                tokens,
+            );
         }
 
         if let Some(default_case_arm) = &self.default_case_arm {
-            else_token.to_tokens(tokens);
+            tokens.append(proc_macro2::Ident::new("else", self.match_token.span()));
             // If statement block must have braces, so add them if they are not in the arm's body.
-            self.braces.surround(tokens, |tokens| default_case_arm.1.to_tokens(tokens));
+            self.braces.surround(tokens, |tokens| {
+                default_case_arm.1.to_tokens(tokens)
+            });
         }
     }
 }
@@ -82,13 +98,10 @@ impl Display for Match {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "match {t} {{", t = self.t.to_token_stream())?;
         for arm in &self.arms {
-            writeln!(f, "\t{case} => {{ {body} }},", case = arm.case, body = match &arm.body {
-                MatchBody::Block { block, .. } => block.to_string(),
-                MatchBody::Expr { expr, .. } => expr.to_token_stream().to_string(),
-            })?;
+            writeln!(f, "\t{case} => {{ {body} }},", case = arm.case, body = arm.body.to_string())?;
         }
         if let Some((_, expr)) = &self.default_case_arm {
-            writeln!(f, "\t_ => {expr}", expr = expr.to_token_stream())?;
+            writeln!(f, "\t_ => {expr}", expr = expr.to_token_stream().to_string())?;
         }
         write!(f, "\n}}")
     }
@@ -109,14 +122,38 @@ impl Debug for Match {
 struct MatchArm {
     case: Condition,
     arrow_token: Token![=>],
-    body: MatchBody,
+    braces: Option<Brace>,
+    body: MetaExpr,
+    _comma: Option<Token![,]>,
 }
 impl Parse for MatchArm {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut braces = None;
+        let mut comma = None;
+        let body;
+
+        if input.peek(Brace) {
+            let inner_body;
+            braces = Some(braced!(inner_body in input));
+            body = inner_body.parse()?;
+            // Arm with braces can have comma, but not rquired
+            comma = input.parse()?;
+        } else {
+            // Parse expr first so that MetaExpr doesn't eat all the tokens
+            let expr = input.parse::<Expr>()?;
+            body = syn::parse2(expr.into_token_stream())?;
+            // Arm without braces requires comma (unless it's last arm)
+            if !input.is_empty() {
+                comma = Some(input.parse()?);
+            }
+        }
+
         Ok(Self {
             case: input.parse()?,
             arrow_token: input.parse()?,
-            body: input.parse()?,
+            body,
+            braces,
+            _comma: comma,
         })
     }
 }
@@ -125,45 +162,5 @@ impl Debug for MatchArm {
         f.debug_struct("MatchArm")
             .field("case", &self.case.to_string())
             .finish()
-    }
-}
-
-enum MatchBody {
-    Block {
-        block: MetaBlock,
-        /// Match arm with braces can **skip** comma.
-        _comma: Option<Token![,]>,
-    },
-    Expr {
-        expr: MetaExpr,
-        /// Match arm with braces **requires** a comma.
-        _comma: Token![,],
-    },
-}
-impl MatchBody {
-    /// Same as [`ToTokens::to_tokens()`], but takes in a **default_braces** for [`MatchBody::Expr`], which will have no **braces**.
-    fn to_tokens(&self, default_braces: &Brace, tokens: &mut TokenStream) {
-        match self {
-            Self::Block { block, .. } => block.to_tokens(tokens),
-            Self::Expr { expr, .. } => {
-                // If statement block must have braces, so add them if they are not in the arm's body.
-                default_braces.surround(tokens, |tokens| expr.to_tokens(tokens))
-            }
-        }
-    }
-}
-impl Parse for MatchBody {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        if input.peek(Brace) {
-            Ok(Self::Block {
-                block: input.parse()?,
-                _comma: input.parse()?,
-            })
-        } else {
-            Ok(Self::Expr {
-                expr: input.parse()?,
-                _comma: input.parse()?,
-            })
-        }
     }
 }

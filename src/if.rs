@@ -1,13 +1,16 @@
 use super::*;
-use crate::common::Condition;
-use syn::{Block, Ident, Token, Type};
+use crate::{
+    common::{Condition, append_if_statement},
+    meta_expr::MetaBlock,
+};
+use syn::{Block, Ident, Token, Type, spanned::Spanned as _};
 
 pub struct If {
     if_token: Token![if],
     t: Type,
     is_token: IsToken,
     condition: Condition,
-    block: Block,
+    block: MetaBlock,
     else_ifs: Vec<ElseIf>,
     else_stmnt: Option<Else>,
 }
@@ -17,7 +20,8 @@ impl Parse for If {
         let t = input.parse()?;
         let is_token = input.parse()?;
         let condition = input.parse()?;
-        let block = input.parse()?;
+        let block = input.parse::<MetaBlock>()?;
+        check_metavar_name(block.expr.metavar_name(), &t)?;
 
         let mut else_ifs = Vec::new();
         let mut else_stmnt = None;
@@ -58,18 +62,28 @@ impl Parse for If {
 }
 impl ToTokens for If {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        self.if_token.to_tokens(tokens);
-        self.condition
-            .to_tokens(&self.t, self.is_token.0.span(), tokens);
-        self.block.to_tokens(tokens);
+        append_if_statement(
+            self.if_token.span(),
+            None,
+            &self.t,
+            self.is_token.0.span(),
+            &self.condition,
+            &self.block.braces,
+            &self.block.expr,
+            tokens,
+        );
 
         for else_if in &self.else_ifs {
-            else_if.else_token.to_tokens(tokens);
-            else_if.if_token.to_tokens(tokens);
-            else_if
-                .condition
-                .to_tokens(&else_if.t, else_if.is_token.0.span(), tokens);
-            else_if.block.to_tokens(tokens);
+            append_if_statement(
+                else_if.if_token.span(),
+                Some(else_if.else_token.span()),
+                &else_if.t,
+                else_if.is_token.0.span(),
+                &else_if.condition,
+                &else_if.block.braces,
+                &else_if.block.expr,
+                tokens,
+            );
         }
 
         if let Some(else_stmnt) = &self.else_stmnt {
@@ -110,18 +124,20 @@ struct ElseIf {
     t: Type,
     is_token: IsToken,
     condition: Condition,
-    block: Block,
+    block: MetaBlock,
 }
 impl Parse for ElseIf {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        Ok(Self {
+        let rtrn = Self {
             else_token: input.parse()?,
             if_token: input.parse()?,
             t: input.parse()?,
             is_token: input.parse()?,
             condition: input.parse()?,
             block: input.parse()?,
-        })
+        };
+        check_metavar_name(rtrn.block.expr.metavar_name(), &rtrn.t)?;
+        Ok(rtrn)
     }
 }
 impl Debug for ElseIf {
@@ -157,4 +173,15 @@ impl Parse for IsToken {
             Err(syn::Error::new(ident.span(), "Expected 'is' meta-keyword"))
         }
     }
+}
+
+fn check_metavar_name(metavar: Option<&str>, t: &Type) -> syn::Result<()> {
+    // The metavariables in the body must match the Type named by the user
+    if let Some(name) = metavar {
+        let t_str = t.to_token_stream().to_string();
+        if name != t_str {
+            return Err(syn::Error::new(t.span(), format!("The metavariables (${name}) must match the generic type provided ({t_str}).")));
+        }
+    }
+    Ok(())
 }
