@@ -3,6 +3,7 @@
 mod common;
 mod r#if;
 mod r#match;
+mod meta_expr;
 
 use r#if::If;
 use r#match::Match;
@@ -63,7 +64,7 @@ use syn::parse::{Parse, ParseStream};
 /// fn my_fn<T: Any>() {
 ///     match_t! {
 ///         match T {
-///             bool | char | u8 | u32 | u64 | usize | u128 => println!("T is unsigned :("),
+///             bool | char | u8 | u32 | u64 | usize | u128 => println!("T is unsigned :(", $T::mogus()),
 ///             i8 | i32 | i64 | isize | i128 => { println!("T is signed! :) Absolute value of -6: {}", $T::abs(-6)) }
 ///             _ => println!("T is... something else: {}", std::any::type_name::<T>())
 ///         }

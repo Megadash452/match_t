@@ -1,8 +1,7 @@
+use super::*;
 use proc_macro2::{Punct, Span};
 use quote::{TokenStreamExt as _, quote, quote_spanned};
 use syn::{Token, Type, punctuated::Punctuated, spanned::Spanned as _};
-
-use super::*;
 
 pub fn type_of_tokens(ty: &Type) -> TokenStream {
     quote_spanned! {ty.span()=> ::std::any::TypeId::of::<#ty>() }

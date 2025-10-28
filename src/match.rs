@@ -1,14 +1,14 @@
 use super::*;
-use crate::common::Condition;
+use crate::{common::Condition, meta_expr::{MetaBlock, MetaExpr}};
 use quote::{TokenStreamExt as _, quote, quote_spanned};
-use syn::{Block, Expr, Token, Type, braced, spanned::Spanned as _, token::Brace};
+use syn::{Token, Type, braced, spanned::Spanned as _, token::Brace};
 
 pub struct Match {
     match_token: Token![match],
     t: Type,
     braces: Brace,
     arms: Vec<MatchArm>,
-    default_case_arm: Option<(Token![=>], Expr)>,
+    default_case_arm: Option<(Token![=>], MetaExpr)>,
 }
 impl Parse for Match {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -23,8 +23,8 @@ impl Parse for Match {
             // When the case arm is just `_`, that goes in the default_case_arm.
             if match_body.parse::<Token![_]>().is_ok() {
                 default_case_arm = Some((
-                    match_body.parse::<Token![=>]>()?,
-                    match_body.parse::<Expr>()?,
+                    match_body.parse()?,
+                    match_body.parse()?,
                 ));
                 // Comma is optional at the last arm
                 match_body.parse::<Option<Token![,]>>()?;
@@ -83,11 +83,8 @@ impl Display for Match {
         writeln!(f, "match {t} {{", t = self.t.to_token_stream())?;
         for arm in &self.arms {
             writeln!(f, "\t{case} => {{ {body} }},", case = arm.case, body = match &arm.body {
-                MatchBody::Block { block, .. } => block.stmts
-                    .iter()
-                    .map(|stmnt| stmnt.to_token_stream())
-                    .collect(),
-                MatchBody::Expr { expr, .. } => expr.to_token_stream(),
+                MatchBody::Block { block, .. } => block.to_string(),
+                MatchBody::Expr { expr, .. } => expr.to_token_stream().to_string(),
             })?;
         }
         if let Some((_, expr)) = &self.default_case_arm {
@@ -133,12 +130,12 @@ impl Debug for MatchArm {
 
 enum MatchBody {
     Block {
-        block: Block,
+        block: MetaBlock,
         /// Match arm with braces can **skip** comma.
         _comma: Option<Token![,]>,
     },
     Expr {
-        expr: Expr,
+        expr: MetaExpr,
         /// Match arm with braces **requires** a comma.
         _comma: Token![,],
     },
