@@ -1,8 +1,8 @@
 use super::*;
 use proc_macro2::{Delimiter, Group, Literal, Punct, Span, TokenTree, extra::DelimSpan};
 use quote::TokenStreamExt as _;
-use syn::{Token, Type, braced, token::Brace};
 use std::{fmt::Write, rc::Rc};
+use syn::{Token, Type, braced, token::Brace};
 
 /// Akin to an [`Expr`], a [`MetaExpr`] is an expression of rust code that contains a *type* **metavariable** that must be resolved to a *concrete type*.
 ///
@@ -13,7 +13,7 @@ use std::{fmt::Write, rc::Rc};
 /// [`MetaExpr`]s can only use *one single* **metavariable** name.
 /// This means that if the [`MetaExpr`] has tokens `$T`, it can't also have `$G`.
 /// It can have multiple instances of the **metavariable**, but all must have the same name.
-/// 
+///
 /// The [`MetaExprInner`] is wrapped in an [`Rc`] because *deep clones* of the `TokenTree` are unnecessary work,
 /// and since [`MetaExprInner`] is *immutable*, it's best to have all clones share the same `TokenTree`.
 pub struct MetaExpr(Rc<MetaExprInner>);
@@ -49,10 +49,10 @@ impl MetaExpr {
 
                     // This frame inherits the inner MetaExpr's metavar_name (unless it already has one)
                     match (&mut metavar_name, inner_expr.metavar_name) {
-                        (Some(name), Some(inner_name)) if name != inner_name.as_str()
+                        (Some(name), Some(inner_name))
+                        if name != inner_name.as_str()
                             => return Err(multiple_metavar_names_error(name, &inner_name, Span::call_site())),
-                        (None, inner_metavar_name)
-                            => metavar_name = inner_metavar_name.clone(),
+                        (None, inner_metavar_name) => metavar_name = inner_metavar_name.clone(),
                         (Some(_), _) => { },
                     }
 

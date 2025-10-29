@@ -1,5 +1,9 @@
 use super::*;
-use crate::{common::Condition, r#if::{Else, ElseIf, IsToken}, meta_expr::{MetaBlock, MetaExpr}};
+use crate::{
+    common::Condition,
+    r#if::{Else, ElseIf, IsToken},
+    meta_expr::{MetaBlock, MetaExpr},
+};
 use proc_macro2::Span;
 use quote::quote_spanned;
 use syn::{Expr, Token, Type, braced, spanned::Spanned as _, token::Brace};
@@ -21,7 +25,8 @@ impl Match {
         }
 
         // Match only has default arm
-        if self.arms.is_empty() && let Some((_, _)) = &self.default_case_arm {
+        if self.arms.is_empty()
+        && let Some((_, _)) = &self.default_case_arm {
             return Err(syn::Error::new(Span::call_site(), "Can't convert a `match` statement with only the default arm to an `if` statement."));
         }
 
@@ -33,21 +38,22 @@ impl Match {
         let mut is_token = syn::parse2::<IsToken>(quote_spanned!(first_arm.arrow_token.span()=> is)).unwrap();
 
         Ok(If {
-            if_token: if_token.clone(),
+            if_token,
             t: self.t.clone(),
             is_token: syn::parse2(quote_spanned!(first_arm.arrow_token.span()=> is)).unwrap(),
             condition: first_arm.case.clone(),
             block: MetaBlock {
-                braces: match &first_arm.braces {
+                braces: match first_arm.braces {
                     Some(braces) => braces,
-                    None => &self.braces
-                }.clone(),
+                    None => self.braces,
+                },
                 expr: first_arm.body.clone(),
             },
-            else_ifs: self.arms[1..].iter()
+            else_ifs: self.arms[1..]
+                .iter()
                 .map(|arm| ElseIf {
-                    else_token: else_token.clone(),
-                    if_token: if_token.clone(),
+                    else_token,
+                    if_token,
                     t: self.t.clone(),
                     is_token: {
                         is_token.0.set_span(arm.arrow_token.span());
@@ -55,30 +61,30 @@ impl Match {
                     },
                     condition: arm.case.clone(),
                     block: MetaBlock {
-                        braces: match &arm.braces {
+                        braces: match arm.braces {
                             Some(braces) => braces,
-                            None => &self.braces
-                        }.clone(),
+                            None => self.braces,
+                        },
                         expr: arm.body.clone(),
-                    }
+                    },
                 })
                 .collect(),
-            else_stmnt: self.default_case_arm
-                .as_ref()
-                .map(|(_, expr)| Else {
-                    else_token: else_token.clone(),
-                    block: match expr {
-                        // Expr (with braces) is already a block, don't need ot wrap it in another block
-                        Expr::Block(block)
-                        if block.label.is_none()
-                        && block.attrs.is_empty() => block.block.clone(),
-                        // Wrap Expr (no braces) in a block
-                        _ => syn::Block {
-                            brace_token: self.braces.clone(),
-                            stmts: vec![syn::Stmt::Expr(expr.clone(), None)],
-                        }
+            else_stmnt: self.default_case_arm.as_ref().map(|(_, expr)| Else {
+                else_token,
+                block: match expr {
+                    // Expr (with braces) is already a block, don't need ot wrap it in another block
+                    Expr::Block(block)
+                    if block.label.is_none()
+                    && block.attrs.is_empty() => {
+                        block.block.clone()
                     }
-                })
+                    // Wrap Expr (no braces) in a block
+                    _ => syn::Block {
+                        brace_token: self.braces,
+                        stmts: vec![syn::Stmt::Expr(expr.clone(), None)],
+                    },
+                },
+            }),
         })
     }
 }
@@ -143,7 +149,8 @@ impl ToTokens for Match {
         }
 
         // Match only has default arm, just output the body directly
-        if self.arms.is_empty() && let Some((_, expr)) = &self.default_case_arm {
+        if self.arms.is_empty()
+        && let Some((_, expr)) = &self.default_case_arm {
             expr.to_tokens(tokens);
             return;
         }
@@ -188,7 +195,7 @@ impl Parse for MatchArm {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let case = input.parse()?;
         let arrow_token = input.parse()?;
-        
+
         let mut braces = None;
         let mut comma = None;
         let body;

@@ -5,7 +5,7 @@ mod r#if;
 mod r#match;
 mod meta_expr;
 
-use r#if ::If;
+use r#if::If;
 use r#match::Match;
 use proc_macro2::TokenStream;
 use quote::ToTokens;
@@ -106,8 +106,8 @@ impl ToTokens for MatchT {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::LazyLock;
     use quote::quote;
+    use std::sync::LazyLock;
 
     #[test]
     fn if_output() {
@@ -120,8 +120,11 @@ mod tests {
                 println!("T is... something else: {}", type_name::<T>())
             }
         }).unwrap();
-        
-        assert!(compare_tokenstreams(if_t.to_token_stream(), syn::parse_str::<TokenStream>(&COMMON_OUTPUT).unwrap()))
+
+        assert!(compare_tokenstreams(
+            if_t.to_token_stream(),
+            syn::parse_str::<TokenStream>(&COMMON_OUTPUT).unwrap()
+        ))
     }
 
     #[test]
@@ -133,37 +136,46 @@ mod tests {
                 _ => println!("T is... something else: {}", type_name::<T>())
             }
         }).unwrap();
-        
-        assert!(compare_tokenstreams(match_t.to_token_stream(), syn::parse_str::<TokenStream>(&COMMON_OUTPUT).unwrap()))
+
+        assert!(compare_tokenstreams(
+            match_t.to_token_stream(),
+            syn::parse_str::<TokenStream>(&COMMON_OUTPUT).unwrap()
+        ))
     }
 
-    static COMMON_OUTPUT: LazyLock<String> = LazyLock::new(|| quote! {
-        if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<bool>()
-        || ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<char>()
-        || ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<u8>() {
-            println!("T is small :(")
-        } else if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<i128>() {
-            println!("T is BIG! :) size: {}", size_of::<i128>())
-        } else if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<u128>() {
-            println!("T is BIG! :) size: {}", size_of::<u128>())
-        } else {
-            println!("T is... something else: {}", type_name::<T>())
+    static COMMON_OUTPUT: LazyLock<String> = LazyLock::new(|| {
+        quote! {
+            if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<bool>()
+            || ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<char>()
+            || ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<u8>() {
+                println!("T is small :(")
+            } else if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<i128>() {
+                println!("T is BIG! :) size: {}", size_of::<i128>())
+            } else if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<u128>() {
+                println!("T is BIG! :) size: {}", size_of::<u128>())
+            } else {
+                println!("T is... something else: {}", type_name::<T>())
+            }
         }
-    }.to_string());
+        .to_string()
+    });
 
     fn compare_tokenstreams(stream1: TokenStream, stream2: TokenStream) -> bool {
         for (tt1, tt2) in stream1.into_iter().zip(stream2.into_iter()) {
             use proc_macro2::TokenTree;
 
             match (tt1, tt2) {
-                (TokenTree::Ident(ident1), TokenTree::Ident(ident2)) if ident1.to_string() == ident2.to_string() => {},
-                (TokenTree::Literal(lit1), TokenTree::Literal(lit2)) if lit1.to_string() == lit2.to_string() => {},
-                (TokenTree::Punct(punct1), TokenTree::Punct(punct2)) if punct1.as_char() == punct2.as_char() => {},
+                (TokenTree::Ident(ident1), TokenTree::Ident(ident2))
+                    if ident1.to_string() == ident2.to_string() => {}
+                (TokenTree::Literal(lit1), TokenTree::Literal(lit2))
+                    if lit1.to_string() == lit2.to_string() => {}
+                (TokenTree::Punct(punct1), TokenTree::Punct(punct2))
+                    if punct1.as_char() == punct2.as_char() => {}
                 (TokenTree::Group(group1), TokenTree::Group(group2)) => {
                     if !compare_tokenstreams(group1.stream(), group2.stream()) {
                         return false;
                     }
-                },
+                }
                 _ => return false,
             }
         }
