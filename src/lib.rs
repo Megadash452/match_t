@@ -5,7 +5,7 @@ mod r#if;
 mod r#match;
 mod meta_expr;
 
-use r#if::If;
+use r#if ::If;
 use r#match::Match;
 use proc_macro2::TokenStream;
 use quote::ToTokens;
@@ -53,7 +53,7 @@ use syn::parse::{Parse, ParseStream};
 ///         } else if T is i8 | i32 | i64 | isize | i128 {
 ///             println!("T is signed! :) Absolute value of -6: {}", $T::abs(-6))
 ///         } else {
-///             println!("T is... something else: {}", std::any::type_name::<T>())
+///             println!("T is... something else: {}", type_name::<T>())
 ///         }
 ///     }
 /// }
@@ -68,7 +68,7 @@ use syn::parse::{Parse, ParseStream};
 ///         match T {
 ///             bool | char | u8 | u32 | u64 | usize | u128 => println!("T is unsigned :(", $T::mogus()),
 ///             i8 | i32 | i64 | isize | i128 => { println!("T is signed! :) Absolute value of -6: {}", $T::abs(-6)) }
-///             _ => println!("T is... something else: {}", std::any::type_name::<T>())
+///             _ => println!("T is... something else: {}", type_name::<T>())
 ///         }
 ///     }
 /// }
@@ -80,8 +80,6 @@ pub fn match_t(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         Err(error) => error.into_compile_error().into(),
     }
 }
-
-// TODO: how to get the `$T` metavariable
 
 /// Called by [`match_t`].
 enum MatchT {
@@ -105,4 +103,71 @@ impl ToTokens for MatchT {
     }
 }
 
-// TODO: test output
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::LazyLock;
+    use quote::quote;
+
+    #[test]
+    fn if_output() {
+        let if_t = syn::parse2::<If>(quote! {
+            if T is bool | char | u8 {
+                println!("T is small :(")
+            } else if T is i128 | u128 {
+                println!("T is BIG! :) size: {}", size_of::<$T>())
+            } else {
+                println!("T is... something else: {}", type_name::<T>())
+            }
+        }).unwrap();
+        
+        assert!(compare_tokenstreams(if_t.to_token_stream(), syn::parse_str::<TokenStream>(&COMMON_OUTPUT).unwrap()))
+    }
+
+    #[test]
+    fn match_output() {
+        let match_t = syn::parse2::<Match>(quote! {
+            match T {
+                bool | char | u8 => println!("T is small :("),
+                i128 | u128 => println!("T is BIG! :) size: {}", size_of::<$T>()),
+                _ => println!("T is... something else: {}", type_name::<T>())
+            }
+        }).unwrap();
+        
+        assert!(compare_tokenstreams(match_t.to_token_stream(), syn::parse_str::<TokenStream>(&COMMON_OUTPUT).unwrap()))
+    }
+
+    static COMMON_OUTPUT: LazyLock<String> = LazyLock::new(|| quote! {
+        if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<bool>()
+        || ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<char>()
+        || ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<u8>() {
+            println!("T is small :(")
+        } else if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<i128>() {
+            println!("T is BIG! :) size: {}", size_of::<i128>())
+        } else if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<u128>() {
+            println!("T is BIG! :) size: {}", size_of::<u128>())
+        } else {
+            println!("T is... something else: {}", type_name::<T>())
+        }
+    }.to_string());
+
+    fn compare_tokenstreams(stream1: TokenStream, stream2: TokenStream) -> bool {
+        for (tt1, tt2) in stream1.into_iter().zip(stream2.into_iter()) {
+            use proc_macro2::TokenTree;
+
+            match (tt1, tt2) {
+                (TokenTree::Ident(ident1), TokenTree::Ident(ident2)) if ident1.to_string() == ident2.to_string() => {},
+                (TokenTree::Literal(lit1), TokenTree::Literal(lit2)) if lit1.to_string() == lit2.to_string() => {},
+                (TokenTree::Punct(punct1), TokenTree::Punct(punct2)) if punct1.as_char() == punct2.as_char() => {},
+                (TokenTree::Group(group1), TokenTree::Group(group2)) => {
+                    if !compare_tokenstreams(group1.stream(), group2.stream()) {
+                        return false;
+                    }
+                },
+                _ => return false,
+            }
+        }
+
+        true
+    }
+}

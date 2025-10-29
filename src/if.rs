@@ -6,13 +6,13 @@ use crate::{
 use syn::{Block, Ident, Token, Type, spanned::Spanned as _};
 
 pub struct If {
-    if_token: Token![if],
-    t: Type,
-    is_token: IsToken,
-    condition: Condition,
-    block: MetaBlock,
-    else_ifs: Vec<ElseIf>,
-    else_stmnt: Option<Else>,
+    pub if_token: Token![if],
+    pub t: Type,
+    pub is_token: IsToken,
+    pub condition: Condition,
+    pub block: MetaBlock,
+    pub else_ifs: Vec<ElseIf>,
+    pub else_stmnt: Option<Else>,
 }
 impl Parse for If {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -118,13 +118,13 @@ impl Debug for If {
     }
 }
 
-struct ElseIf {
-    else_token: Token![else],
-    if_token: Token![if],
-    t: Type,
-    is_token: IsToken,
-    condition: Condition,
-    block: MetaBlock,
+pub struct ElseIf {
+    pub else_token: Token![else],
+    pub if_token: Token![if],
+    pub t: Type,
+    pub is_token: IsToken,
+    pub condition: Condition,
+    pub block: MetaBlock,
 }
 impl Parse for ElseIf {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -149,9 +149,9 @@ impl Debug for ElseIf {
     }
 }
 
-struct Else {
-    else_token: Token![else],
-    block: Block,
+pub struct Else {
+    pub else_token: Token![else],
+    pub block: Block,
     // Don't embed else-ifs here (make different type ElseIf) to avoid recursion.
 }
 impl Parse for Else {
@@ -163,7 +163,8 @@ impl Parse for Else {
     }
 }
 
-struct IsToken(Ident);
+#[derive(Clone)]
+pub struct IsToken(pub Ident);
 impl Parse for IsToken {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let ident = input.parse::<Ident>()?;

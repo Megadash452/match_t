@@ -39,8 +39,8 @@ pub fn append_if_statement(
             if_token.to_tokens(tokens);
             *is_first = false;
         } else {
-            if_token.to_tokens(tokens);
             else_token.to_tokens(tokens);
+            if_token.to_tokens(tokens);
         }
     }
 
@@ -67,6 +67,7 @@ pub fn append_if_statement(
     }
 }
 
+#[derive(Clone)]
 pub struct Condition(Punctuated<Type, Token![|]>);
 impl Condition {
     /// Generate a `boolean` [`Condition`] that compares `T` with all [`Types`][Type] in `Self` for use in an `if` statement.

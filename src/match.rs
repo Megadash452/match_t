@@ -1,9 +1,7 @@
 use super::*;
-use crate::{
-    common::{Condition, append_if_statement},
-    meta_expr::MetaExpr,
-};
-use quote::TokenStreamExt as _;
+use crate::{common::Condition, r#if::{Else, ElseIf, IsToken}, meta_expr::{MetaBlock, MetaExpr}};
+use proc_macro2::Span;
+use quote::quote_spanned;
 use syn::{Expr, Token, Type, braced, spanned::Spanned as _, token::Brace};
 
 pub struct Match {
@@ -12,6 +10,77 @@ pub struct Match {
     braces: Brace,
     arms: Vec<MatchArm>,
     default_case_arm: Option<(Token![=>], Expr)>,
+}
+impl Match {
+    /// Directly converts the [`Match`] statement to an equivalent [`If`] statement.
+    #[allow(unused)]
+    fn to_if(&self) -> syn::Result<If> {
+        // Exit if there are no conditions/blocks to output
+        if self.arms.is_empty() {
+            return Err(syn::Error::new(Span::call_site(), "Can't convert a `match` statement with no arms to an `if` statement."));
+        }
+
+        // Match only has default arm
+        if self.arms.is_empty() && let Some((_, _)) = &self.default_case_arm {
+            return Err(syn::Error::new(Span::call_site(), "Can't convert a `match` statement with only the default arm to an `if` statement."));
+        }
+
+        // At this point, arms is guaranteed to contain elements
+        let first_arm = self.arms.first().unwrap();
+
+        let if_token = syn::parse2::<Token![if]>(quote_spanned!(self.match_token.span()=> if)).unwrap();
+        let else_token = syn::parse2::<Token![else]>(quote_spanned!(self.match_token.span()=> else)).unwrap();
+        let mut is_token = syn::parse2::<IsToken>(quote_spanned!(first_arm.arrow_token.span()=> is)).unwrap();
+
+        Ok(If {
+            if_token: if_token.clone(),
+            t: self.t.clone(),
+            is_token: syn::parse2(quote_spanned!(first_arm.arrow_token.span()=> is)).unwrap(),
+            condition: first_arm.case.clone(),
+            block: MetaBlock {
+                braces: match &first_arm.braces {
+                    Some(braces) => braces,
+                    None => &self.braces
+                }.clone(),
+                expr: first_arm.body.clone(),
+            },
+            else_ifs: self.arms[1..].iter()
+                .map(|arm| ElseIf {
+                    else_token: else_token.clone(),
+                    if_token: if_token.clone(),
+                    t: self.t.clone(),
+                    is_token: {
+                        is_token.0.set_span(arm.arrow_token.span());
+                        is_token.clone()
+                    },
+                    condition: arm.case.clone(),
+                    block: MetaBlock {
+                        braces: match &arm.braces {
+                            Some(braces) => braces,
+                            None => &self.braces
+                        }.clone(),
+                        expr: arm.body.clone(),
+                    }
+                })
+                .collect(),
+            else_stmnt: self.default_case_arm
+                .as_ref()
+                .map(|(_, expr)| Else {
+                    else_token: else_token.clone(),
+                    block: match expr {
+                        // Expr (with braces) is already a block, don't need ot wrap it in another block
+                        Expr::Block(block)
+                        if block.label.is_none()
+                        && block.attrs.is_empty() => block.block.clone(),
+                        // Wrap Expr (no braces) in a block
+                        _ => syn::Block {
+                            brace_token: self.braces.clone(),
+                            stmts: vec![syn::Stmt::Expr(expr.clone(), None)],
+                        }
+                    }
+                })
+        })
+    }
 }
 impl Parse for Match {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -68,30 +137,19 @@ impl Parse for Match {
 }
 impl ToTokens for Match {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        for arm in self.arms.iter() {
-            let braces = match &arm.braces {
-                Some(braces) => braces,
-                None => &self.braces,
-            };
-            append_if_statement(
-                self.match_token.span(),
-                None,
-                &self.t,
-                arm.arrow_token.span(),
-                &arm.case,
-                braces,
-                &arm.body,
-                tokens,
-            );
+        // Exit if there are no conditions/blocks to output
+        if self.arms.is_empty() {
+            return;
         }
 
-        if let Some(default_case_arm) = &self.default_case_arm {
-            tokens.append(proc_macro2::Ident::new("else", self.match_token.span()));
-            // If statement block must have braces, so add them if they are not in the arm's body.
-            self.braces.surround(tokens, |tokens| {
-                default_case_arm.1.to_tokens(tokens)
-            });
+        // Match only has default arm, just output the body directly
+        if self.arms.is_empty() && let Some((_, expr)) = &self.default_case_arm {
+            expr.to_tokens(tokens);
+            return;
         }
+
+        // Can unwrap because already handled error cases
+        self.to_if().unwrap().to_tokens(tokens);
     }
 }
 impl Display for Match {
@@ -128,6 +186,9 @@ struct MatchArm {
 }
 impl Parse for MatchArm {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        let case = input.parse()?;
+        let arrow_token = input.parse()?;
+        
         let mut braces = None;
         let mut comma = None;
         let body;
@@ -149,8 +210,8 @@ impl Parse for MatchArm {
         }
 
         Ok(Self {
-            case: input.parse()?,
-            arrow_token: input.parse()?,
+            case,
+            arrow_token,
             body,
             braces,
             _comma: comma,
