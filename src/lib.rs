@@ -1,4 +1,9 @@
-#![doc = include_str!("../README.md")]
+//! # Match `T`
+//!
+//! [![Github](https://img.shields.io/badge/Github-000000?logo=github)](https://github.com/Megadash452/match_t/)
+//!
+//! Allows a programmer to write an `if` or `match` expression where the items being compared are **Types**.
+//! Specifically, you compare a *generic type* (`T`) against any *concrete type* in Rust and run different code dpending on the type that matched.
 
 mod common;
 mod r#if;
@@ -10,7 +15,7 @@ use r#match::Match;
 use proc_macro2::TokenStream;
 use quote::ToTokens;
 use std::fmt::{Debug, Display};
-use syn::parse::{Parse, ParseStream};
+use syn::{Token, parse::{Parse, ParseStream}};
 
 /// Run different of code depending on the **concrete type** of `T`.
 ///
@@ -46,6 +51,7 @@ use syn::parse::{Parse, ParseStream};
 /// ```
 /// # use match_t::match_t;
 /// # use std::any::Any;
+/// # use std::any::type_name;
 /// fn my_fn<T: Any>() {
 ///     match_t! {
 ///         if T is bool | char | u8 | u32 | u64 | usize | u128 {
@@ -63,10 +69,11 @@ use syn::parse::{Parse, ParseStream};
 /// ```
 /// # use match_t::match_t;
 /// # use std::any::Any;
+/// # use std::any::type_name;
 /// fn my_fn<T: Any>() {
 ///     match_t! {
 ///         match T {
-///             bool | char | u8 | u32 | u64 | usize | u128 => println!("T is unsigned :(", $T::mogus()),
+///             bool | char | u8 | u32 | u64 | usize | u128 => println!("T is unsigned :("),
 ///             i8 | i32 | i64 | isize | i128 => { println!("T is signed! :) Absolute value of -6: {}", $T::abs(-6)) }
 ///             _ => println!("T is... something else: {}", type_name::<T>())
 ///         }
@@ -88,10 +95,11 @@ enum MatchT {
 }
 impl Parse for MatchT {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        input
-            .parse::<If>()
-            .map(Self::If)
-            .or_else(|_| input.parse::<Match>().map(Self::Match))
+        Ok(if input.peek(Token![if]) {
+            Self::If(input.parse::<If>()?)
+        } else {
+            Self::Match(input.parse::<Match>()?)
+        })
     }
 }
 impl ToTokens for MatchT {
@@ -179,6 +187,28 @@ mod tests {
         ))
     }
 
+    #[test]
+    fn if_else() {
+        let if_t = syn::parse2::<If>(quote! {
+            if T is bool {
+                println!("T is small :( size:", size_of::<$T>())
+            } else {
+                println!("T is... something else: {}", type_name::<T>())
+            }
+        }).unwrap();
+
+        assert!(compare_tokenstreams(
+            if_t.to_token_stream(),
+            syn::parse2::<TokenStream>(quote! {
+                if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<bool>() {
+                    println!("T is small :( size:", size_of::<bool>())
+                } else {
+                    println!("T is... something else: {}", type_name::<T>())
+                }
+            }).unwrap()
+        ))
+    }
+
     /// Each else-if clause in the if statement can reference a different generic type.
     #[test]
     fn if_multiple_metavars() {
@@ -211,7 +241,10 @@ mod tests {
     });
 
     fn compare_tokenstreams(stream1: TokenStream, stream2: TokenStream) -> bool {
-        for (tt1, tt2) in stream1.into_iter().zip(stream2.into_iter()) {
+        let mut stream1 = stream1.into_iter();
+        let mut stream2 = stream2.into_iter();
+
+        while let Some((tt1, tt2)) = stream1.next().zip(stream2.next()) {
             use proc_macro2::TokenTree;
 
             match (tt1, tt2) {
@@ -228,6 +261,11 @@ mod tests {
                 }
                 _ => return false,
             }
+        }
+
+        // If either of th eiterators were not consumed, the tokenstreams have different length, therefore not equal.
+        if stream1.next().is_some() || stream2.next().is_some() {
+            return false;
         }
 
         true

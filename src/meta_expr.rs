@@ -70,7 +70,7 @@ impl MetaExpr {
                         token_iter.next().unwrap();
 
                         match &metavar_name {
-                            Some(name) => if ident == name {
+                            Some(name) => if ident != name {
                                 return Err(multiple_metavar_names_error(name, &ident.to_string(), ident.span()));
                             },
                             _ => metavar_name = Some(ident.to_string()),

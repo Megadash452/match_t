@@ -35,12 +35,7 @@ impl Parse for If {
                     // Encountered else
                     let new = input.parse::<Else>()?;
                     match else_stmnt {
-                        Some(_) => {
-                            return Err(syn::Error::new(
-                                new.else_token.span,
-                                "Two 'else' statements are not allowed",
-                            ));
-                        }
+                        Some(_) => return Err(syn::Error::new(new.else_token.span, "Two 'else' statements are not allowed")),
                         None => else_stmnt = Some(new),
                     }
                 }

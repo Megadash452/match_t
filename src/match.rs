@@ -13,21 +13,16 @@ pub struct Match {
     t: Type,
     braces: Brace,
     arms: Vec<MatchArm>,
-    default_case_arm: Option<(Token![=>], Expr)>,
+    default_case_arm: Option<DefaultArm>,
 }
 impl Match {
     /// Directly converts the [`Match`] statement to an equivalent [`If`] statement.
     #[allow(unused)]
     fn to_if(&self) -> syn::Result<If> {
         // Exit if there are no conditions/blocks to output
-        if self.arms.is_empty() {
-            return Err(syn::Error::new(Span::call_site(), "Can't convert a `match` statement with no arms to an `if` statement."));
-        }
-
-        // Match only has default arm
-        if self.arms.is_empty()
-        && let Some((_, _)) = &self.default_case_arm {
-            return Err(syn::Error::new(Span::call_site(), "Can't convert a `match` statement with only the default arm to an `if` statement."));
+        // Also can't convert it if it only one default arm
+        if self.arms.is_empty() /* && self.default_case_arm.is_none() */ {
+            return Err(syn::Error::new(Span::call_site(), "Can't convert a `match` statement with no conditions to an `if` statement."));
         }
 
         // At this point, arms is guaranteed to contain elements
@@ -69,22 +64,24 @@ impl Match {
                     },
                 })
                 .collect(),
-            else_stmnt: self.default_case_arm.as_ref().map(|(_, expr)| Else {
-                else_token,
-                block: match expr {
-                    // Expr (with braces) is already a block, don't need ot wrap it in another block
-                    Expr::Block(block)
-                    if block.label.is_none()
-                    && block.attrs.is_empty() => {
-                        block.block.clone()
-                    }
-                    // Wrap Expr (no braces) in a block
-                    _ => syn::Block {
-                        brace_token: self.braces,
-                        stmts: vec![syn::Stmt::Expr(expr.clone(), None)],
+            else_stmnt: self.default_case_arm
+                .as_ref()
+                .map(|default_arm| Else {
+                    else_token,
+                    block: match &default_arm.expr {
+                        // Expr (with braces) is already a block, don't need ot wrap it in another block
+                        Expr::Block(block)
+                        if block.label.is_none()
+                        && block.attrs.is_empty() => {
+                            block.block.clone()
+                        }
+                        // Wrap Expr (no braces) in a block
+                        _ => syn::Block {
+                            brace_token: self.braces,
+                            stmts: vec![syn::Stmt::Expr(default_arm.expr.clone(), None)],
+                        },
                     },
-                },
-            }),
+                }),
         })
     }
 }
@@ -99,17 +96,18 @@ impl Parse for Match {
 
         while !match_body.is_empty() {
             // When the case arm is just `_`, that goes in the default_case_arm.
-            if match_body.parse::<Token![_]>().is_ok() {
-                default_case_arm = Some((
-                    match_body.parse()?,
-                    match_body.parse()?,
-                ));
-                // Comma is optional at the last arm
-                match_body.parse::<Option<Token![,]>>()?;
+            if let Ok(wild) = match_body.parse::<Token![_]>() {
+                default_case_arm = Some(DefaultArm {
+                    _wild: wild,
+                    _arrow: match_body.parse()?,
+                    expr: match_body.parse()?,
+                    // Comma is optional at the last arm
+                    _comma: match_body.parse()?,
+                });
 
                 // default_case must also be the LAST case
                 if !match_body.is_empty() {
-                    return Err(match_body.error("Unexpected tokens: Default case must be the last case"));
+                    return Err(match_body.error("Unexpected tokens: Default case must be the last case."));
                 }
 
                 break;
@@ -129,7 +127,7 @@ impl Parse for Match {
         }
 
         if !input.is_empty() {
-            return Err(input.error("Unexpected tokens: 'match' only has 1 body; no other expressions are allowed"));
+            return Err(input.error("Unexpected tokens: 'match' only has 1 body; no other expressions are allowed."));
         }
 
         Ok(Self {
@@ -144,14 +142,14 @@ impl Parse for Match {
 impl ToTokens for Match {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         // Exit if there are no conditions/blocks to output
-        if self.arms.is_empty() {
+        if self.arms.is_empty() && self.default_case_arm.is_none() {
             return;
         }
 
         // Match only has default arm, just output the body directly
         if self.arms.is_empty()
-        && let Some((_, expr)) = &self.default_case_arm {
-            expr.to_tokens(tokens);
+        && let Some(default_arm) = &self.default_case_arm {
+            default_arm.expr.to_tokens(tokens);
             return;
         }
 
@@ -165,8 +163,8 @@ impl Display for Match {
         for arm in &self.arms {
             writeln!(f, "\t{case} => {{ {body} }},", case = arm.case, body = arm.body)?;
         }
-        if let Some((_, expr)) = &self.default_case_arm {
-            writeln!(f, "\t_ => {expr}", expr = expr.to_token_stream())?;
+        if let Some(default_arm) = &self.default_case_arm {
+            writeln!(f, "\t_ => {expr}", expr = default_arm.expr.to_token_stream())?;
         }
         write!(f, "\n}}")
     }
@@ -231,4 +229,11 @@ impl Debug for MatchArm {
             .field("case", &self.case.to_string())
             .finish()
     }
+}
+
+struct DefaultArm {
+    _wild: Token![_],
+    _arrow: Token![=>],
+    expr: Expr,
+    _comma: Option<Token![,]>,
 }
