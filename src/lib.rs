@@ -110,6 +110,38 @@ mod tests {
     use std::sync::LazyLock;
 
     #[test]
+    fn match_output() {
+        let match_t = syn::parse2::<Match>(quote! {
+            match T {
+                bool | char | u8 => println!("T is small :("),
+                i128 | u128 => println!("T is BIG! :) size: {}", size_of::<$T>()),
+                _ => println!("T is... something else: {}", type_name::<T>())
+            }
+        }).unwrap();
+
+        assert!(compare_tokenstreams(
+            match_t.to_token_stream(),
+            syn::parse_str::<TokenStream>(&COMMON_OUTPUT).unwrap()
+        ))
+    }
+
+    #[test]
+    fn default_only_match() {
+        let match_t = syn::parse2::<Match>(quote! {
+            match T {
+                _ => println!("T is... something else: {}", type_name::<T>())
+            }
+        }).unwrap();
+
+        assert!(compare_tokenstreams(
+            match_t.to_token_stream(),
+            syn::parse2::<TokenStream>(quote! {
+                println!("T is... something else: {}", type_name::<T>())
+            }).unwrap()
+        ))
+    }
+
+    #[test]
     fn if_output() {
         let if_t = syn::parse2::<If>(quote! {
             if T is bool | char | u8 {
@@ -128,19 +160,37 @@ mod tests {
     }
 
     #[test]
-    fn match_output() {
-        let match_t = syn::parse2::<Match>(quote! {
-            match T {
-                bool | char | u8 => println!("T is small :("),
-                i128 | u128 => println!("T is BIG! :) size: {}", size_of::<$T>()),
-                _ => println!("T is... something else: {}", type_name::<T>())
+    fn short_if() {
+        let if_t = syn::parse2::<If>(quote! {
+            if T is bool | char {
+                println!("T is small :( size:", size_of::<$T>())
             }
         }).unwrap();
 
         assert!(compare_tokenstreams(
-            match_t.to_token_stream(),
-            syn::parse_str::<TokenStream>(&COMMON_OUTPUT).unwrap()
+            if_t.to_token_stream(),
+            syn::parse2::<TokenStream>(quote! {
+                if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<bool>() {
+                    println!("T is small :( size:", size_of::<bool>())
+                } else if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<char>() {
+                    println!("T is small :( size:", size_of::<char>())
+                }
+            }).unwrap()
         ))
+    }
+
+    /// Each else-if clause in the if statement can reference a different generic type.
+    #[test]
+    fn if_multiple_metavars() {
+        syn::parse2::<If>(quote! {
+            if T is bool | char | u8 {
+                println!("T is small :(")
+            } else if G is i128 | u128 {
+                println!("T is BIG! :) size: {}", size_of::<$G>())
+            } else {
+                println!("T is... something else: {}", type_name::<T>())
+            }
+        }).unwrap();
     }
 
     static COMMON_OUTPUT: LazyLock<String> = LazyLock::new(|| {
