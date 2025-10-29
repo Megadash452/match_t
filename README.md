@@ -4,7 +4,7 @@
 [![Docs](https://img.shields.io/docsrs/match_t?style=for-the-badge&logo=rust)](https://docs.rs/match_t/latest)
 
 Allows a programmer to write an `if` or `match` expression where the items being compared are **Types**.
-Specifically, you compare a *generic type* (`T`) against any *concrete type* in Rust and run different code dpending on the type that matched.
+Specifically, you compare a *generic type* (`T`) against any *concrete type* in Rust and run different code depending on the type that matched.
 
 ## Usage
 

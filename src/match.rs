@@ -69,7 +69,7 @@ impl Match {
                 .map(|default_arm| Else {
                     else_token,
                     block: match &default_arm.expr {
-                        // Expr (with braces) is already a block, don't need ot wrap it in another block
+                        // Expr (with braces) is already a block, don't need to wrap it in another block
                         Expr::Block(block)
                         if block.label.is_none()
                         && block.attrs.is_empty() => {
@@ -202,7 +202,7 @@ impl Parse for MatchArm {
             let inner_body;
             braces = Some(braced!(inner_body in input));
             body = inner_body.parse()?;
-            // Arm with braces can have comma, but not rquired
+            // Arm with braces can have comma, but not required
             comma = input.parse()?;
         } else {
             // Parse expr first so that MetaExpr doesn't eat all the tokens

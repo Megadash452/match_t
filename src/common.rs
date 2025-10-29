@@ -75,7 +75,7 @@ impl Condition {
     /// **eq_span** is the [`Span`] that will be assigned to the *equal signs* (`==`) in the condition.
     pub fn to_tokens(&self, generic_t: &Type, eq_span: Span, tokens: &mut TokenStream) {
         for pair in self.0.pairs() {
-            // Append comparision (`T == ty`)
+            // Append comparison (`T == ty`)
             Self::single_to_tokens(pair.value(), generic_t, eq_span, tokens);
 
             if let Some(bitor) = pair.punct() {

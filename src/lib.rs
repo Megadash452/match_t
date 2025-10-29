@@ -3,7 +3,7 @@
 //! [![Github](https://img.shields.io/badge/Github-000000?logo=github)](https://github.com/Megadash452/match_t/)
 //!
 //! Allows a programmer to write an `if` or `match` expression where the items being compared are **Types**.
-//! Specifically, you compare a *generic type* (`T`) against any *concrete type* in Rust and run different code dpending on the type that matched.
+//! Specifically, you compare a *generic type* (`T`) against any *concrete type* in Rust and run different code depending on the type that matched.
 
 mod common;
 mod r#if;
@@ -29,7 +29,7 @@ use syn::{Token, parse::{Parse, ParseStream}};
 /// The `T` in this case is the same *generic type* that was passed in.
 /// The metavariable resolves to the **concrete type** that matched with the type of `T`.
 ///
-/// The metavariable is not available within the `else` block of the *`if`` statement*,
+/// The metavariable is not available within the `else` block of the *`if` statement*,
 /// or within the *default/catch-all* (`_`) arm of the *`match` statement*.
 ///
 /// ## Limitations
@@ -105,8 +105,8 @@ impl Parse for MatchT {
 impl ToTokens for MatchT {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
-            Self::If(ift) => ift.to_tokens(tokens),
-            Self::Match(matcht) => matcht.to_tokens(tokens),
+            Self::If(if_t) => if_t.to_tokens(tokens),
+            Self::Match(match_t) => match_t.to_tokens(tokens),
         }
     }
 }
