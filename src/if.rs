@@ -182,7 +182,7 @@ fn append_if_statement(if_or_elseif: Either<&If, &ElseIf>, tokens: &mut TokenStr
     };
 
     // Can't output a first `if` statement if caller is requesting all `else-if` statements.
-    let mut is_first = if_or_elseif.is_right();
+    let mut is_first = if_or_elseif.is_left();
     // Why closure behaving weird and capturing tokens forever? :/
     fn append_if_tokens(
         is_first: &mut bool,
