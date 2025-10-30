@@ -4,9 +4,9 @@ use crate::{
     r#if::{Else, ElseIf, IsToken},
     meta_expr::{MetaBlock, MetaExpr},
 };
-use proc_macro2::Span;
-use quote::quote_spanned;
-use syn::{Expr, Token, Type, braced, spanned::Spanned as _, token::Brace};
+use proc_macro2::{Span, TokenTree};
+use quote::{quote_spanned, TokenStreamExt as _};
+use syn::{Expr, Token, Type, braced, token::Brace, spanned::Spanned as _};
 
 pub struct Match {
     match_token: Token![match],
@@ -35,7 +35,7 @@ impl Match {
         Ok(If {
             if_token,
             t: self.t.clone(),
-            is_token: syn::parse2(quote_spanned!(first_arm.arrow_token.span()=> is)).unwrap(),
+            is_token: is_token.clone(),
             condition: first_arm.case.clone(),
             block: MetaBlock {
                 braces: match first_arm.braces {
@@ -195,7 +195,7 @@ impl Parse for MatchArm {
         let arrow_token = input.parse()?;
 
         let mut braces = None;
-        let mut comma = None;
+        let comma;
         let body;
 
         if input.peek(Brace) {
@@ -205,13 +205,35 @@ impl Parse for MatchArm {
             // Arm with braces can have comma, but not required
             comma = input.parse()?;
         } else {
-            // Parse expr first so that MetaExpr doesn't eat all the tokens
-            let expr = input.parse::<Expr>()?;
-            body = syn::parse2(expr.into_token_stream())?;
-            // Arm without braces requires comma (unless it's last arm)
-            if !input.is_empty() {
-                comma = Some(input.parse()?);
-            }
+            // Collect tokens to parse as MetaExpr while parsing for comma.
+            let mut tokens = TokenStream::new();
+
+            // Parse until comma first so that MetaExpr doesn't eat all the tokens
+            comma = input.step(|cursor| {
+                let mut cursor = *cursor; // Why they made cursor StepCursor and not Cursor??
+
+                while let Some((tt, next)) = cursor.token_tree() {
+                    cursor = next;
+
+                    if let TokenTree::Punct(punct) = &tt
+                    && punct.as_char() == ',' {
+                        // Convert punct to Token
+                        let mut tokens = TokenStream::new();
+                        tokens.append(TokenTree::Punct(punct.clone()));
+                        let token = syn::parse2::<Token![,]>(tokens).unwrap();
+                        return Ok((Some(token), cursor));
+                    }
+
+                    // Token was not the comma, append it to the tokens to parse as MetaExpr
+                    tokens.append(tt);
+                }
+
+                // Did not find comma, but that's ok because last arm can ommit comma.
+                Ok((None, cursor))
+            })?;
+
+            // Parse MetaExpr from collected tokens
+            body = syn::parse2(tokens)?;
         }
 
         Ok(Self {

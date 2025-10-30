@@ -1,8 +1,7 @@
 use super::*;
-use crate::{
-    common::{Condition, append_if_statement},
-    meta_expr::MetaBlock,
-};
+use crate::{common::Condition, meta_expr::MetaBlock};
+use either::Either;
+use quote::{TokenStreamExt as _, quote_spanned};
 use syn::{Block, Ident, Token, Type, spanned::Spanned as _};
 
 pub struct If {
@@ -57,28 +56,10 @@ impl Parse for If {
 }
 impl ToTokens for If {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        append_if_statement(
-            self.if_token.span(),
-            None,
-            &self.t,
-            self.is_token.0.span(),
-            &self.condition,
-            &self.block.braces,
-            &self.block.expr,
-            tokens,
-        );
+        append_if_statement(Either::Left(self), tokens);
 
         for else_if in &self.else_ifs {
-            append_if_statement(
-                else_if.if_token.span(),
-                Some(else_if.else_token.span()),
-                &else_if.t,
-                else_if.is_token.0.span(),
-                &else_if.condition,
-                &else_if.block.braces,
-                &else_if.block.expr,
-                tokens,
-            );
+            append_if_statement(Either::Right(else_if), tokens);
         }
 
         if let Some(else_stmnt) = &self.else_stmnt {
@@ -168,6 +149,77 @@ impl Parse for IsToken {
         } else {
             Err(syn::Error::new(ident.span(), "Expected 'is' meta-keyword"))
         }
+    }
+}
+
+/// Appends Rust tokens of a single [`If`] or [`ElseIf`] statement.
+/// 
+/// That is, this function outputs the `else if`, condition, and block.
+fn append_if_statement(if_or_elseif: Either<&If, &ElseIf>, tokens: &mut TokenStream) {
+    let if_token;
+    let else_token;
+    let generic_t;
+    let is_token;
+    let condition;
+    let block;
+    match if_or_elseif {
+        Either::Right(els) => {
+            if_token = els.if_token;
+            else_token = els.else_token;
+            generic_t = &els.t;
+            is_token = &els.is_token;
+            condition = &els.condition;
+            block = &els.block;
+        },
+        Either::Left(if_) => {
+            if_token = if_.if_token;
+            else_token = syn::parse2(quote_spanned!(if_.if_token.span()=> else)).unwrap();
+            generic_t = &if_.t;
+            is_token = &if_.is_token;
+            condition = &if_.condition;
+            block = &if_.block;
+        },
+    };
+
+    // Can't output a first `if` statement if caller is requesting all `else-if` statements.
+    let mut is_first = if_or_elseif.is_right();
+    // Why closure behaving weird and capturing tokens forever? :/
+    fn append_if_tokens(
+        is_first: &mut bool,
+        if_token: Token![if],
+        else_token: Token![else],
+        tokens: &mut TokenStream,
+    ) {
+        // First arm's condition gets `if`, all other arms get `else-if`
+        if *is_first {
+            if_token.to_tokens(tokens);
+            *is_first = false;
+        } else {
+            else_token.to_tokens(tokens);
+            if_token.to_tokens(tokens);
+        }
+    }
+
+    if block.expr.metavar_name().is_some() {
+        // When an if's block has a metavariable, each condition must be put in a different `else-if` block.
+        // The metavar_name check is done in Parse
+        for cond_ty in condition {
+            append_if_tokens(&mut is_first, if_token, else_token, tokens);
+            Condition::single_to_tokens(cond_ty, generic_t, is_token.0.span(), tokens);
+            // Clone the same body for each block.
+            // Metavariables are resolved to cond_ty
+            block.braces.surround(tokens, |tokens| {
+                tokens.append_all(block.expr.to_token_stream(cond_ty))
+            });
+        }
+    } else {
+        // No metavariables in the body means we output a single normal `if/else-if` statement
+        append_if_tokens(&mut is_first, if_token, else_token, tokens);
+        condition.to_tokens(generic_t, is_token.0.span(), tokens);
+        // Provide a fake Type since there are no metavariables to resolve
+        block.braces.surround(tokens, |tokens| {
+            tokens.append_all(block.expr.to_token_stream(&Type::Verbatim(TokenStream::new())))
+        });
     }
 }
 

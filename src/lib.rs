@@ -15,7 +15,10 @@ use r#match::Match;
 use proc_macro2::TokenStream;
 use quote::ToTokens;
 use std::fmt::{Debug, Display};
-use syn::{Token, parse::{Parse, ParseStream}};
+use syn::{
+    Token,
+    parse::{Parse, ParseStream},
+};
 
 /// Run different of code depending on the **concrete type** of `T`.
 ///
@@ -73,8 +76,8 @@ use syn::{Token, parse::{Parse, ParseStream}};
 /// fn my_fn<T: Any>() {
 ///     match_t! {
 ///         match T {
-///             bool | char | u8 | u32 | u64 | usize | u128 => println!("T is unsigned :("),
-///             i8 | i32 | i64 | isize | i128 => { println!("T is signed! :) Absolute value of -6: {}", $T::abs(-6)) }
+///             bool | char | u8 | u32 | u64 | usize | u128 => { println!("T is unsigned :(") }
+///             i8 | i32 | i64 | isize | i128 => println!("T is signed! :) Absolute value of -6: {}", $T::abs(-6)),
 ///             _ => println!("T is... something else: {}", type_name::<T>())
 ///         }
 ///     }
