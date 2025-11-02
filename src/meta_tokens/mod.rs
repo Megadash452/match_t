@@ -27,8 +27,8 @@ impl MetaExpr {
     }
 
     /// Like [`ToTokens::to_tokens()`], but takes a [`Type`] to resovle [metavariables][MetaToken::MetaVar] to.
-    pub fn to_tokens(&self, concrete_ty: &Type, tokens: &mut TokenStream) {
-        self.0.tokens.to_tokens(concrete_ty, tokens)
+    pub fn to_tokens(&self, ty: &Type, tokens: &mut TokenStream) {
+        self.0.tokens.to_tokens(ty, tokens)
     }
 }
 impl Parse for MetaExpr {

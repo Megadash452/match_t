@@ -14,14 +14,14 @@ impl MetaTokenStream {
     /// Converts the [`MetaTokenStream`] back to a normal Rust [`TokenStream`].
     ///
     /// The **metavariables** (if any) are resolved to the **concrete type** that is passed in.
-    fn to_token_stream(&self, concrete_ty: &Type) -> TokenStream {
+    fn to_token_stream(&self, ty: &Type) -> TokenStream {
         let mut stream = TokenStream::new();
-        self.to_tokens(concrete_ty, &mut stream);
+        self.to_tokens(ty, &mut stream);
         stream
     }
 
     /// Same as [`Self::to_token_stream()`], but appends the tokens directly to an existing [`TokenStream`].
-    pub fn to_tokens(&self, concrete_ty: &Type, stream: &mut TokenStream) {
+    pub fn to_tokens(&self, ty: &Type, stream: &mut TokenStream) {
         for meta_token in self.0.iter() {
             match meta_token {
                 MetaToken::Group {
@@ -30,33 +30,33 @@ impl MetaTokenStream {
                     tokens,
                 } => {
                     let mut inner_stream = TokenStream::new();
-                    tokens.to_tokens(concrete_ty, &mut inner_stream);
+                    tokens.to_tokens(ty, &mut inner_stream);
                     let mut group = Group::new(*delim, inner_stream);
                     group.set_span(span.join());
                     group.to_tokens(stream);
                 },
-                MetaToken::MetaCast { expr, as_token, ty, t, cast_ty } => {
+                MetaToken::MetaCast { expr, ty: ty_tokens, t, cast_ty, .. } => {
                     let (from_ty, to_ty);
-                    let generic_ty = ty.to_token_stream(&Type::Verbatim(TokenStream::from_str(t).unwrap()));
-                    let concrete_ty_ = ty.to_token_stream(concrete_ty);
+                    let generic_ty = ty_tokens.to_token_stream(&Type::Verbatim(TokenStream::from_str(t).unwrap()));
+                    let resolved_ty = ty_tokens.to_token_stream(ty);
                     match cast_ty {
                         MetaCastType::GenericToConcrete => {
                             from_ty = generic_ty;
-                            to_ty = concrete_ty_;
+                            to_ty = resolved_ty;
                         },
                         MetaCastType::ConcreteToGeneric => {
-                            from_ty = concrete_ty_;
+                            from_ty = resolved_ty;
                             to_ty = generic_ty;
                         },
                     }
 
-                    let value = expr.to_token_stream(concrete_ty);
+                    let value = expr.to_token_stream(ty);
                     
-                    /* SAFETY: We know that `T` is the **concrete_ty** because we checked it with TypeId.
-                               So casting something like `[T]` to `[concrete_ty]` is safe. */
-                    quote! { unsafe { *(&(#value) #as_token &#from_ty as *const _ as *const #to_ty) as #to_ty } }.to_tokens(stream);
+                    /* SAFETY: We know that `T` is the **resolved_ty** because we checked it with TypeId.
+                               So casting something like `[T]` to `[resolved_ty]` is safe. */
+                    quote! { unsafe { ::std::mem::transumte::<#from_ty, #to_ty>(#value) } }.to_tokens(stream);
                 },
-                MetaToken::MetaVar { .. } => utils::clear_span(concrete_ty.to_token_stream()).to_tokens(stream),
+                MetaToken::MetaVar { .. } => utils::clear_span(ty.to_token_stream()).to_tokens(stream),
                 MetaToken::Ident(ident) => ident.to_tokens(stream),
                 MetaToken::Lit(lit) => lit.to_tokens(stream),
                 MetaToken::Punct(punct) => punct.to_tokens(stream),

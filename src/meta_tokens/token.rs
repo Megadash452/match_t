@@ -27,6 +27,7 @@ pub enum MetaToken {
     /// This is done so that there is a placeholder to replace with any type that is needed in the cast.
     MetaCast {
         expr: MetaTokenStream,
+        #[allow(unused)]
         as_token: Token![as],
         ty: MetaTokenStream,
         /// Name of the generic Type (e.g. `T`).
