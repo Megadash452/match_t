@@ -1,5 +1,5 @@
 use super::*;
-use crate::{common::Condition, meta_expr::MetaBlock};
+use crate::{common::Condition, meta_tokens::MetaBlock};
 use either::Either;
 use quote::quote_spanned;
 use syn::{Block, Ident, Token, Type, spanned::Spanned as _};

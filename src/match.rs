@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     common::Condition,
     r#if::{Else, ElseIf, IsToken},
-    meta_expr::{MetaBlock, MetaExpr},
+    meta_tokens::{MetaBlock, MetaExpr},
 };
 use proc_macro2::{Span, TokenTree};
 use quote::{quote_spanned, TokenStreamExt as _};
