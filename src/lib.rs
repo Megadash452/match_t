@@ -55,10 +55,10 @@ use syn::{
 /// # use match_t::match_t;
 /// # use std::any::Any;
 /// # use std::any::type_name;
-/// fn my_fn<T: Any>() {
+/// fn my_fn<T: Any>(val: T) {
 ///     match_t! {
 ///         if T is bool | char | u8 | u32 | u64 | usize | u128 {
-///             println!("T is unsigned :(")
+///             println!("T is unsigned :( Is it 0?: ", val as $T == 0)
 ///         } else if T is i8 | i32 | i64 | isize | i128 {
 ///             println!("T is signed! :) Absolute value of -6: {}", $T::abs(-6))
 ///         } else {
@@ -73,7 +73,7 @@ use syn::{
 /// # use match_t::match_t;
 /// # use std::any::Any;
 /// # use std::any::type_name;
-/// fn my_fn<T: Any>() {
+/// fn my_fn<T: Any>(val: T) {
 ///     match_t! {
 ///         match T {
 ///             bool | char | u8 | u32 | u64 | usize | u128 => { println!("T is unsigned :(") }
@@ -153,6 +153,30 @@ mod tests {
     }
 
     #[test]
+    fn no_default_match() {
+        let match_t = syn::parse2::<Match>(quote! {
+            match T {
+                bool | char => println!("T is small :("),
+                i128 | u128 => println!("T is BIG! :) size: {}", size_of::<$T>())
+            }
+        }).unwrap();
+
+        assert!(compare_tokenstreams(
+            match_t.to_token_stream(),
+            syn::parse2::<TokenStream>(quote! {
+                if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<bool>()
+                || ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<char>() {
+                    println!("T is small :(")
+                } else if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<i128>() {
+                    println!("T is BIG! :) size: {}", size_of::<i128>())
+                } else if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<u128>() {
+                    println!("T is BIG! :) size: {}", size_of::<u128>())
+                }
+            }).unwrap()
+        ))
+    }
+
+    #[test]
     fn if_output() {
         let if_t = syn::parse2::<If>(quote! {
             if T is bool | char | u8 {
@@ -224,6 +248,25 @@ mod tests {
                 println!("T is... something else: {}", type_name::<T>())
             }
         }).unwrap();
+    }
+
+    #[test]
+    fn metacast() {
+        let if_t = syn::parse2::<If>(quote! {
+            if T is bool | char {
+                println!("T Array: {}", t_array::<$T>() as [$T; 5])
+            }
+        }).unwrap();
+
+        println!("Debug block:\n{:#?}", if_t.block.expr);
+        println!("Output: {}", if_t.to_token_stream());
+
+        assert!(compare_tokenstreams(
+            if_t.to_token_stream(),
+            syn::parse2::<TokenStream>(quote! {
+                
+            }).unwrap()
+        ))
     }
 
     static COMMON_OUTPUT: LazyLock<String> = LazyLock::new(|| {

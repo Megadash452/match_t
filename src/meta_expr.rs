@@ -1,7 +1,7 @@
 use super::*;
-use proc_macro2::{Delimiter, Group, Literal, Punct, Span, TokenTree, extra::DelimSpan};
-use quote::TokenStreamExt as _;
-use std::{fmt::Write, rc::Rc};
+use proc_macro2::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenTree, extra::DelimSpan};
+use quote::{TokenStreamExt as _, quote};
+use std::{collections::VecDeque, fmt::Write, rc::Rc, str::FromStr};
 use syn::{Token, Type, braced, token::Brace};
 
 /// Akin to an [`Expr`], a [`MetaExpr`] is an expression of rust code that contains a *type* **metavariable** that must be resolved to a *concrete type*.
@@ -17,6 +17,7 @@ use syn::{Token, Type, braced, token::Brace};
 /// The [`MetaExprInner`] is wrapped in an [`Rc`] because *deep clones* of the `TokenTree` are unnecessary work,
 /// and since [`MetaExprInner`] is *immutable*, it's best to have all clones share the same `TokenTree`.
 pub struct MetaExpr(Rc<MetaExprInner>);
+#[derive(Debug)]
 struct MetaExprInner {
     tokens: MetaTokenStream,
     /// The *name* of the **metavariable** used in the *tokens* (if any).
@@ -30,14 +31,83 @@ impl MetaExpr {
     }
 
     /// Converts all tokens in a [`TokenStream`] into [`MetaToken`].
+    /// 
+    /// **parsing_type** is set to `true` if a [`MetaCastType`] is being parsed
+    /// and should return [`Err`] if another *cast* (`as` keyword) is found.
     ///
-    /// Returns error if more than 1 **metavariable** names are found.
-    fn parse_all(stream: TokenStream) -> syn::Result<MetaExprInner> {
+    /// Returns [`Err`] if more than 1 **metavariable** names are found.
+    fn parse_all(stream: TokenStream, parsing_type: bool) -> syn::Result<MetaExprInner> {
         let mut tokens = Vec::new();
         let mut metavar_name = None::<String>;
+        fn set_metavar_name(metavar_name: &mut Option<String>, obtained_name: Option<&Ident>) -> syn::Result<()> {
+            match (&metavar_name, obtained_name) {
+                // Parsed tokens returned with a metavar_name different from the one set in the current frame.
+                (Some(metavar_name), Some(obtained_name)) => if obtained_name != metavar_name {
+                    return Err(syn::Error::new(
+                        obtained_name.span(),
+                        format!("Only one Metavariable/Generic Type name can be used within a branch. Found ${obtained_name} while ${metavar_name} exists.")
+                    ));
+                },
+                // The metavar_name has not yet been set in the current frame. INherit it from the tokens just parsed.
+                (None, Some(obtained_name)) => *metavar_name = Some(obtained_name.to_string()),
+                // There is nothing to compare the current metavar_name with, so do nothing.
+                (_, None) => { }
+            }
+            Ok(())
+        }
 
-        fn multiple_metavar_names_error(name_1: &str, name_2: &str, span: Span) -> syn::Error {
-            syn::Error::new(span, format!("Only one Metavariable name can be used within a branch. Found ${name_2} while ${name_1} exists."))
+        /// Take previous tokens as value until a certain token is reach, or the end.
+        fn parse_metacast_value(tokens: &mut Vec<MetaToken>, as_token_span: Span) -> syn::Result<MetaTokenStream> {
+            let mut value_tokens = Vec::new();
+            // Keep last token to append later.
+            // Teh loop's first element should be the seocnd to last token.
+            if tokens.is_empty() {
+                return Err(syn::Error::new(as_token_span, "There must be a Cast value *before* the 'as' keyword."));
+            }
+            let last_token = tokens.remove(tokens.len() - 1);
+            /// Whether to break or not to break. If punct is alone.
+            fn is_alone(punct: &Punct, tokens: &[MetaToken]) -> bool {
+                if tokens.len() < 2 {
+                    return true;
+                }
+
+                if punct.spacing() == Spacing::Alone
+                && let Some(MetaToken::Punct(prev)) = tokens.last_chunk::<2>().map(|array| array.first().unwrap())
+                && prev.as_char() == punct.as_char() && prev.spacing() == Spacing::Joint {
+                    false
+                } else {
+                    true
+                }
+            }
+            while let Some(token) = tokens.last() {
+                match token {
+                    MetaToken::Group { delim, .. } => match delim {
+                        Delimiter::Brace => break,
+                        _ => { },
+                    },
+                    MetaToken::Punct(punct) => match punct.as_char() {
+                        ':' if is_alone(punct, &tokens) => break,
+                        '=' if is_alone(punct, &tokens) => break,
+                        '|' if is_alone(punct, &tokens) => break,
+                        ';' => break,
+                        _ => { },
+                    },
+                    MetaToken::MetaVar { .. } => { },
+                    MetaToken::MetaCast { .. } => { },
+                    MetaToken::Ident(_) => { },
+                    MetaToken::Lit(_) => { },
+                }
+
+                value_tokens.push(tokens.remove(tokens.len() - 1));
+            }
+            // Put back last token
+            tokens.push(last_token);
+            // Keep last token to append later
+            if value_tokens.is_empty() {
+                return Err(syn::Error::new(as_token_span, "Error parsing Cast value tokens."));
+            }
+
+            Ok(MetaTokenStream(value_tokens))
         }
 
         let mut token_iter = stream.into_iter();
@@ -45,16 +115,13 @@ impl MetaExpr {
         while let Some(tt) = token_iter.next() {
             match tt {
                 TokenTree::Group(group) => {
-                    let inner_expr = Self::parse_all(group.stream())?;
+                    let inner_expr = Self::parse_all(group.stream(), parsing_type)?;
+                    let obtained_name = inner_expr.metavar_name
+                        .as_ref()
+                        .map(|str| Ident::new(&str, Span::call_site()));
 
                     // This frame inherits the inner MetaExpr's metavar_name (unless it already has one)
-                    match (&mut metavar_name, inner_expr.metavar_name) {
-                        (Some(name), Some(inner_name))
-                        if name != inner_name.as_str()
-                            => return Err(multiple_metavar_names_error(name, &inner_name, Span::call_site())),
-                        (None, inner_metavar_name) => metavar_name = inner_metavar_name.clone(),
-                        (Some(_), _) => { },
-                    }
+                    set_metavar_name(&mut metavar_name, obtained_name.as_ref())?;
 
                     tokens.push(MetaToken::Group {
                         delim: group.delimiter(),
@@ -69,24 +136,114 @@ impl MetaExpr {
                         // Matched a metavariable! Push it to tokens and advance Cursor.
                         token_iter.next().unwrap();
 
-                        match &metavar_name {
-                            Some(name) => if ident != name {
-                                return Err(multiple_metavar_names_error(name, &ident.to_string(), ident.span()));
-                            },
-                            _ => metavar_name = Some(ident.to_string()),
-                        }
+                        set_metavar_name(&mut metavar_name, Some(&ident))?;
 
                         tokens.push(MetaToken::MetaVar {
-                            _dollar: syn::parse2(punct.to_token_stream()).unwrap(),
+                            dollar: syn::token::Dollar { spans: [punct.span()] },
                             t: ident,
                         });
                     } else {
-                        // Did not match a metavariable, rerun iteration with this new token
+                        // Did not match a metavariable, rerun iteration with the same tokens
                         // (do not advance cursor)
                         tokens.push(MetaToken::Punct(punct))
                     }
                 },
-                TokenTree::Ident(ident) => tokens.push(MetaToken::Ident(ident)),
+                TokenTree::Ident(ident) => {
+                    if ident == "as" {
+                        if parsing_type {
+                            return Err(syn::Error::new(ident.span(), "Casts are not allowed within the Type of another Cast"));
+                        }
+
+                        // Cast Type turns out to be a Rust type with the generic.
+                        // Parse tokens for the Type and look for the Generic Ident within the Type.
+                        if let Ok(ty) = syn::parse2::<Type>(token_iter.clone().collect()) {
+                            // If a metavariable_name has been set for this frame, look for the generic type within the Type
+                            let generic = if let Some(name) = &metavar_name {
+                                // Look for an Ident with the same name as the metavariable within the parsed tokens.
+                                let mut obtained_name = None;
+                                for token in ty.to_token_stream().iter_bfs() {
+                                    if let TokenTree::Ident(ident) = token
+                                    && ident == name {
+                                        obtained_name = Some(ident);
+                                        break;
+                                    }
+                                }
+                                // Set the metavar name for the current frame
+                                set_metavar_name(&mut metavar_name, obtained_name.as_ref())?;
+
+                                match obtained_name {
+                                    Some(t) => t,
+                                    None => {
+                                        // An Ident with the same name as the metavariable was NOT found in Type, so these tokens do not count as MetaCast.
+                                        // Ignore anything that was parsed, just add the 'as' token and move on.
+                                        tokens.push(MetaToken::Ident(ident));
+                                        continue;
+                                    }
+                                }
+                            } else {
+                                // MetaVar name has not been set in this frame, so don't know what to look for....
+                                todo!();
+                                let a = 5;
+                            };
+
+                            // Advance tokens to the length of the parsed tokens
+                            for _ in 0..ty.to_token_stream().into_iter().count() {
+                                token_iter.next().unwrap();
+                            }
+
+                            let token = MetaToken::MetaCast {
+                                expr: parse_metacast_value(&mut tokens, ident.span())?,
+                                as_token: syn::token::As { span: ident.span() },
+                                ty: Self::parse_all(ty.to_token_stream(), true)?.tokens,
+                                t: generic.to_string(),
+                                cast_ty: MetaCastType::ConcreteToGeneric,
+                            };
+                            tokens.push(token);
+                        } else {
+                            // syn::Type failed to parse, so the Type may contain a metavariable. It must be parsed manually.
+                            let mut fork = token_iter.clone();
+                            let ty_tokens = parse_metatype(&mut fork)
+                                .map_err(|err| syn::Error::new(err.span(), format!("Error parsing MetaType: {err}")))?;
+
+                            // Look for the MetaVar (obtained_name) within the parsed tokens.
+                            let mut obtained_name = None;
+                            for token in ty_tokens.iter_bfs() {
+                                if let MetaToken::MetaVar { t, .. } = token {
+                                    obtained_name = Some(t.clone());
+                                    break;
+                                }
+                            }
+                            // Set the metavar name for the current frame
+                            set_metavar_name(&mut metavar_name, obtained_name.as_ref())?;
+
+                            let metavar_name = match obtained_name {
+                                Some(name) => name.to_string(),
+                                // If a Metavar was not found in the tokens, it means the user provided invalid tokens (assumption, not verified)
+                                None => {
+                                    // Ignore anything that was parsed, just add the 'as' token and move on.
+                                    tokens.push(MetaToken::Ident(ident));
+                                    continue;
+                                }
+                            };
+
+                            // Advance tokens to the length of the parsed tokens
+                            for _ in 0..ty_tokens.0.len() {
+                                token_iter.next().unwrap();
+                            }
+
+                            let token = MetaToken::MetaCast {
+                                expr: parse_metacast_value(&mut tokens, ident.span())?,
+                                as_token: syn::token::As { span: ident.span() },
+                                ty: ty_tokens,
+                                t: metavar_name,
+                                cast_ty: MetaCastType::GenericToConcrete,
+                            };
+                            tokens.push(token);
+                        }
+                    } else {
+                        tokens.push(MetaToken::Ident(ident))
+                    }
+                },
                 TokenTree::Literal(lit) => tokens.push(MetaToken::Lit(lit)),
             }
         }
@@ -97,40 +254,15 @@ impl MetaExpr {
         })
     }
 
-    /// Converts the [`MetaExpr] back to a normal Rust expression/block of code.
-    ///
-    /// The **metavariables** (if any) are resolved to the **type** that is passed in.
-    pub fn to_token_stream(&self, ty: &Type) -> TokenStream {
-        Self::to_token_stream_impl(&self.0.tokens.0, ty)
-    }
-    fn to_token_stream_impl(tokens: &[MetaToken], ty: &Type) -> TokenStream {
-        let mut stream = TokenStream::new();
-
-        for meta_token in tokens {
-            match meta_token {
-                MetaToken::Group {
-                    delim,
-                    span,
-                    tokens,
-                } => {
-                    let inner_stream = Self::to_token_stream_impl(&tokens.0, ty);
-                    let mut group = Group::new(*delim, inner_stream);
-                    group.set_span(span.join());
-                    stream.append(group);
-                },
-                MetaToken::MetaVar { .. } => stream.append_all(clear_span(ty.to_token_stream())),
-                MetaToken::Ident(ident) => ident.to_tokens(&mut stream),
-                MetaToken::Lit(lit) => lit.to_tokens(&mut stream),
-                MetaToken::Punct(punct) => punct.to_tokens(&mut stream),
-            }
-        }
-
-        stream
+    /// Like [`ToTokens::to_tokens()`], but takes a [`Type`] to resovle [metavariables][MetaToken::MetaVar] to.
+    pub fn to_tokens(&self, concrete_ty: &Type, tokens: &mut TokenStream) {
+        // TODO: make tokens.to_tokens()
+        tokens.append_all(self.0.tokens.to_token_stream(concrete_ty))
     }
 }
 impl Parse for MetaExpr {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        Self::parse_all(TokenStream::parse(input)?)
+        Self::parse_all(TokenStream::parse(input)?, false)
             .map(|inner| Self(Rc::new(inner)))
     }
 }
@@ -146,7 +278,12 @@ impl Display for MetaExpr {
 }
 impl Debug for MetaExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        <MetaTokenStream as Debug>::fmt(&self.0.tokens, f)
+        <MetaExprInner as Debug>::fmt(&self.0, f)
+    }
+}
+impl Display for MetaExprInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        <MetaTokenStream as Display>::fmt(&self.tokens, f)
     }
 }
 
@@ -183,8 +320,57 @@ impl Debug for MetaBlock {
     }
 }
 
-#[derive(Clone)]
 struct MetaTokenStream(Vec<MetaToken>);
+impl MetaTokenStream {
+    /// Converts the [`MetaTokenStream`] back to a normal Rust [`TokenStream`].
+    ///
+    /// The **metavariables** (if any) are resolved to the **concrete type** that is passed in.
+    fn to_token_stream(&self, concrete_ty: &Type) -> TokenStream {
+        let mut stream = TokenStream::new();
+
+        for meta_token in self.0.iter() {
+            match meta_token {
+                MetaToken::Group {
+                    delim,
+                    span,
+                    tokens,
+                } => {
+                    let inner_stream = tokens.to_token_stream(concrete_ty);
+                    let mut group = Group::new(*delim, inner_stream);
+                    group.set_span(span.join());
+                    stream.append(group);
+                },
+                MetaToken::MetaCast { expr, as_token, ty, t, cast_ty } => {
+                    let (from_ty, to_ty);
+                    let generic_ty = ty.to_token_stream(&Type::Verbatim(TokenStream::from_str(t).unwrap()));
+                    let concrete_ty_ = ty.to_token_stream(concrete_ty);
+                    match cast_ty {
+                        MetaCastType::GenericToConcrete => {
+                            from_ty = generic_ty;
+                            to_ty = concrete_ty_;
+                        },
+                        MetaCastType::ConcreteToGeneric => {
+                            from_ty = concrete_ty_;
+                            to_ty = generic_ty;
+                        },
+                    }
+
+                    let value = expr.to_token_stream(concrete_ty);
+                    
+                    /* SAFETY: We know that `T` is the **concrete_ty** because we checked it with TypeId.
+                               So casting something like `[T]` to `[concrete_ty]` is safe. */
+                    stream.append_all(quote! { unsafe { *(&(#value) #as_token &#from_ty as *const _ as *const #to_ty) as #to_ty } });
+                },
+                MetaToken::MetaVar { .. } => stream.append_all(clear_span(concrete_ty.to_token_stream())),
+                MetaToken::Ident(ident) => ident.to_tokens(&mut stream),
+                MetaToken::Lit(lit) => lit.to_tokens(&mut stream),
+                MetaToken::Punct(punct) => punct.to_tokens(&mut stream),
+            }
+        }
+
+        stream
+    }
+}
 impl Display for MetaTokenStream {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for meta_token in &self.0 {
@@ -206,7 +392,6 @@ impl Debug for MetaTokenStream {
 }
 
 /// A [`TokenTree`] that can hold a [`Metavar`].
-#[derive(Clone)]
 enum MetaToken {
     Group {
         delim: Delimiter,
@@ -214,12 +399,48 @@ enum MetaToken {
         tokens: MetaTokenStream,
     },
     MetaVar {
-        _dollar: Token![$],
-        t: syn::Ident,
+        #[allow(unused)]
+        dollar: Token![$],
+        /// Name of the generic Type (e.g. `T`).
+        t: Ident,
     },
-    Ident(proc_macro2::Ident),
+    /// There are 2 types of `MetaCast`:
+    ///  * A cast that contains a [`MetaVar`] (`$T`).
+    ///    This cast converts a *value* with a **generic type** `T` to the **concrete type**.
+    ///  * A cast that contains a **generic type** (`T`).
+    ///    This cast converts a *value* with a **concrete type** to the **generic type**.
+    /// 
+    /// While both *types of cast* are mutually exclusive (a Type with *metavariables* can't contain *generics* in the input),
+    /// the `T` in both are represented by a [`MetaVar`][MetaToken::MetaVar].
+    /// This is done so that there is a placeholder to replace with any type that is needed in the cast.
+    MetaCast {
+        expr: MetaTokenStream,
+        as_token: Token![as],
+        ty: MetaTokenStream,
+        /// Name of the generic Type (e.g. `T`).
+        t: String,
+        cast_ty: MetaCastType,
+    },
+    Ident(Ident),
     Punct(Punct),
     Lit(Literal),
+}
+impl MetaToken {
+    /// See [`MetaExpr::parse_all()`].
+    /// WARNING: Only use when you know that the token is not 'as' or '$', as it will mess up the MetaTokenStream parsing.
+    /// This function is perfectly safe otherwise.
+    unsafe fn from_tt(tt: TokenTree, parsing_type: bool) -> syn::Result<Self> {
+        Ok(match tt {
+            TokenTree::Group(group) => Self::Group {
+                delim: group.delimiter(),
+                span: group.delim_span(),
+                tokens: MetaExpr::parse_all(group.stream(), parsing_type)?.tokens,
+            },
+            TokenTree::Ident(ident) => Self::Ident(ident),
+            TokenTree::Punct(punct) => Self::Punct(punct),
+            TokenTree::Literal(lit) => Self::Lit(lit),
+        })
+    }
 }
 impl Display for MetaToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -236,6 +457,7 @@ impl Display for MetaToken {
                 f.write_str(close)
             },
             MetaToken::MetaVar { t, .. } => write!(f, "${t}"),
+            MetaToken::MetaCast { expr, ty, .. } => write!(f, "{expr} as {ty}"),
             MetaToken::Ident(ident) => f.write_str(&ident.to_string()),
             MetaToken::Lit(lit) => f.write_str(&lit.to_string()),
             MetaToken::Punct(punct) => f.write_char(punct.as_char()),
@@ -254,11 +476,24 @@ impl Debug for MetaToken {
                 .field("tokens", tokens)
                 .finish(),
             MetaToken::MetaVar { t, .. } => write!(f, "MetaVar(${t})"),
+            MetaToken::MetaCast { expr, ty, cast_ty, .. } => f.debug_struct("MetaCast")
+                .field("expr", expr)
+                .field("ty", ty)
+                .field("cast_ty", cast_ty)
+                .finish(),
             MetaToken::Ident(ident) => write!(f, "Ident({:?})", ident.to_string()),
             MetaToken::Punct(punct) => write!(f, "Punct({:?})", punct.as_char()),
             MetaToken::Lit(lit) => write!(f, "Lit({lit})"),
         }
     }
+}
+
+#[derive(Debug)]
+enum MetaCastType {
+    /// `as $T`.
+    GenericToConcrete,
+    /// `as T`.
+    ConcreteToGeneric,
 }
 
 fn clear_span(stream: TokenStream) -> TokenStream {
@@ -278,4 +513,347 @@ fn clear_span(stream: TokenStream) -> TokenStream {
     }
 
     stream_buf
+}
+
+/// MetaTypes (used in [`MetaCast`][MetaToken::MetaCast]) are recursive, so a separate function is required.
+/// 
+/// This basically tries to emulate the behavior of [`syn::Type`]'s [`parse()`][syn::Type::parse()] to guess where it should stop parsing.
+/// 
+/// Returns [`Err`] if the parsed tokens are not a [`MetaCastType`].
+/// That is, the tokens don't contain a [`MetaVar`].
+
+// TODO: make unit tests for this garbage 🤭.
+fn parse_metatype<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I) -> syn::Result<MetaTokenStream> {
+    // ZAMNNN this really is some spaghetti code. Could it be worse than yanderedev?
+    fn parse_angle_bracket_group<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I) -> syn::Result<MetaTokenStream> {
+        let mut tokens = Vec::new();
+        let mut fork = token_iter.clone();
+
+        match fork.next() {
+            // Treat angle brackets as acceptable Group.
+            Some(TokenTree::Punct(punct)) if punct.as_char() == '<' => {
+                token_iter.next().unwrap();
+                // Advance until the closing angle bracket (while pushing tokens)
+                tokens.push(MetaToken::Punct(punct));
+                let mut levels: usize = 1;
+
+                while let Some(tt) = token_iter.next() {
+                    match &tt {
+                        TokenTree::Punct(punct) if punct.as_char() == '<' => {
+                            // Add opening angle bracket to the stack
+                            levels += 1;
+                        },
+                        TokenTree::Punct(punct) if punct.as_char() == '>' => {
+                            // Take closing angle bracket from the stack
+                            levels -= 1;
+                            if levels == 0 {
+                                break;
+                            }
+                        },
+                        _ => { }
+                    }
+
+                    tokens.push(unsafe {  MetaToken::from_tt(tt, true)? });
+                }
+
+                Ok(MetaTokenStream(tokens))
+            },
+            tt => {
+                let span = match tt {
+                    Some(tt) => tt.span(),
+                    None => Span::call_site(),
+                };
+                Err(syn::Error::new(span, "Unexpected tokens: Expected opening angle bracket (<) for Group."))
+            },
+        }
+    }
+
+    fn parse_path<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I) -> syn::Result<MetaTokenStream> {
+        let mut tokens = Vec::new();
+
+        let mut fork = token_iter.clone();
+
+        while let Some(tt) = fork.next() {
+            match tt {
+                TokenTree::Group(group) => return Err(syn::Error::new(group.span(), format!("Grouped tokens (with delimiter {:?}) are not allowed in a Type Path.", group.delimiter()))),
+                TokenTree::Punct(punct) => match punct.as_char() {
+                    // Treat angle brackets as acceptable Group.
+                    '<' => tokens.extend(parse_angle_bracket_group(token_iter)?.0),
+                    '>' => return Err(syn::Error::new(punct.span(), "Found an unpaired closing angle bracket (>).")),
+                    ':' if punct.spacing() == Spacing::Joint
+                    && matches!(fork.next(), Some(TokenTree::Punct(punct)) if punct.spacing() == Spacing::Alone) => {
+                        // Found '::' for path, pusho tokens and keep parsing
+                        for _ in 0..2 {
+                            tokens.push(unsafe { MetaToken::from_tt(token_iter.next().unwrap(), true)? });
+                        }
+                    },
+                    // Unknown token; not part of Type. Stop parsing :D
+                    _ => break,
+                },
+                // Found Ident for path, pusho tokens and keep parsing
+                TokenTree::Ident(ident) => tokens.push(MetaToken::Ident(ident)),
+                // Unknown token; not part of Type. Stop parsing :D
+                TokenTree::Literal(_) => break,
+            }
+        }
+
+        Ok(MetaTokenStream(tokens))
+    }
+
+    fn parse_fn<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I) -> syn::Result<MetaTokenStream> {
+        let mut tokens = Vec::new();
+
+        if let Some(TokenTree::Ident(ident)) = token_iter.clone().next()
+        && ident == "for" {
+            token_iter.next().unwrap();
+            tokens.push(MetaToken::Ident(ident));
+
+            tokens.extend(parse_angle_bracket_group(token_iter)?.0);
+        }
+
+        if let Some(TokenTree::Ident(ident)) = token_iter.clone().next()
+        && ident == "unsafe" {
+            token_iter.next().unwrap();
+            tokens.push(MetaToken::Ident(ident));
+        }
+
+        if let Some(TokenTree::Ident(ident)) = token_iter.clone().next()
+        && ident == "extern" {
+            token_iter.next().unwrap();
+            
+            if let Some(TokenTree::Literal(lit)) = token_iter.next()
+            && lit.to_string().starts_with("\"") {
+                tokens.push(MetaToken::Ident(ident));
+                tokens.push(MetaToken::Lit(lit));
+            } else {
+                return Err(syn::Error::new(ident.span(), "Unexpected tokens: Expected string literal after 'extern' for ABI."));
+            }
+        }
+
+        if let Some(TokenTree::Ident(ident)) = token_iter.clone().next()
+        && ident == "fn" {
+            token_iter.next().unwrap();
+            tokens.push(MetaToken::Ident(ident));
+        } else {
+            let span = match token_iter.next() {
+                Some(tt) => tt.span(),
+                None => Span::call_site(),
+            };
+            return Err(syn::Error::new(span, "Unexpected tokens: Expected 'fn'"));
+        }
+
+        if let Some(TokenTree::Group(group)) = token_iter.clone().next()
+        && group.delimiter() == Delimiter::Parenthesis {
+            tokens.push(unsafe { MetaToken::from_tt(token_iter.next().unwrap(), true)? });
+        } else {
+            let span = match token_iter.next() {
+                Some(tt) => tt.span(),
+                None => Span::call_site(),
+            };
+            return Err(syn::Error::new(span, "Unexpected tokens: Expected parameters Parenthesis (...)"));
+        }
+
+        let mut fork = token_iter.clone();
+        if let Some(TokenTree::Punct(punct)) = fork.next()
+        && punct.as_char() == '-' && punct.spacing() == Spacing::Joint
+        && matches!(fork.next(), Some(TokenTree::Punct(punct)) if punct.as_char() == '>') {
+            for _ in 0..2 {
+                tokens.push(unsafe { MetaToken::from_tt(token_iter.next().unwrap(), true)? })
+            }
+
+            tokens.extend(
+                parse_metatype(token_iter)
+                    .map_err(|err| syn::Error::new(err.span(), format!("Error parsing return Type of bare fn: {err}")))?.0
+            );
+        }
+
+        Ok(MetaTokenStream(tokens))
+    }
+
+    // WARNING: may not be filled with parsed tokens
+    let mut tokens = Vec::new();
+
+    let mut fork = token_iter.clone();
+
+    // Peek tokens to see which function is the parser
+    match fork.next() {
+        Some(tt) => match tt {
+            // Found group: only the group is the type.
+            TokenTree::Group(group) => MetaExpr::parse_all(group.stream(), true)
+                .map(|meta_expr| meta_expr.tokens),
+            TokenTree::Ident(ident) => match ident.to_string().as_str() {
+                "for" => parse_fn(token_iter),
+                "fn" => parse_fn(token_iter),
+                "impl" => Err(syn::Error::new(ident.span(), "Unexpected tokens: 'impl' trait types are not valid MetaCast types.")),
+                "dyn" => Err(syn::Error::new(ident.span(), "Unexpected tokens: 'dyn' trait types are not valid MetaCast types.")),
+                "_" => Err(syn::Error::new(ident.span(), "Unexpected tokens: Infer type (_) is not a valid MetaCast type.")),
+                _ => parse_path(token_iter),
+            },
+            TokenTree::Punct(punct) => match punct.as_char() {
+                ':' if punct.spacing() == Spacing::Joint => match fork.next() {
+                    Some(TokenTree::Punct(punct))
+                    if punct.as_char() == ':' && punct.spacing() == Spacing::Alone
+                        => parse_path(token_iter),
+                    // This token is not part of the Type
+                    _ => Err(syn::Error::new(punct.span(), "Unexpected tokens: Invalid token ':' while parsing Type."))
+                },
+                '$' => match fork.next() {
+                    // MetaType is MetaVariable alone
+                    Some(TokenTree::Ident(ident)) => {
+                        // Advance token_iter to fork.
+                        for _ in 0..2 {
+                            token_iter.next().unwrap();
+                        }
+
+                        Ok(MetaTokenStream(vec![
+                            MetaToken::MetaVar {
+                                dollar: syn::token::Dollar { spans: [punct.span()] },
+                                t: ident,
+                            },
+                        ]))
+                    },
+                    _ => Err(syn::Error::new(punct.span(), "Error parsing MetaVariable: Expected an Ident after the '$'"))
+                },
+                '&' if punct.spacing() == Spacing::Alone => {
+                    // Advance token_iter to fork.
+                    token_iter.next().unwrap();
+                    tokens.push(MetaToken::Punct(punct));
+
+                    // Parse reference
+                    if let Some(TokenTree::Punct(punct)) = token_iter.clone().next()
+                    && punct.as_char() == '\'' {
+                        token_iter.next().unwrap();
+
+                        if let Some(TokenTree::Ident(ident)) = token_iter.next() {
+                            tokens.push(MetaToken::Punct(punct));
+                            tokens.push(MetaToken::Ident(ident));
+                        } else {
+                            return Err(syn::Error::new(punct.span(), "Unexpected tokens: Expected Ident for lifetime."));
+                        }
+                    }
+
+                    if let Some(TokenTree::Ident(ident)) = token_iter.clone().next()
+                    && ident == "mut" {
+                        token_iter.next().unwrap();
+                        tokens.push(MetaToken::Ident(ident));
+                    }
+
+                    // RECURSION HERE vvv
+                    tokens.extend(parse_metatype(token_iter)?.0);
+
+                    Ok(MetaTokenStream(tokens))
+                },
+                '*' if punct.spacing() == Spacing::Alone => {
+                    // Advance token_iter to fork.
+                    token_iter.next().unwrap();
+                    tokens.push(MetaToken::Punct(punct));
+
+                    // Parse raw pointer
+                    if let Some(TokenTree::Ident(ident)) = token_iter.clone().next()
+                    && ident == "const" {
+                        token_iter.next().unwrap();
+                        tokens.push(MetaToken::Ident(ident));
+                    }
+
+                    if let Some(TokenTree::Ident(ident)) = token_iter.clone().next()
+                    && ident == "mut" {
+                        token_iter.next().unwrap();
+                        tokens.push(MetaToken::Ident(ident));
+                    }
+
+                    // RECURSION HERE vvv
+                    tokens.extend(parse_metatype(token_iter)?.0);
+
+                    Ok(MetaTokenStream(tokens))
+                }
+                '!' => Err(syn::Error::new(punct.span(), "Unexpected tokens: Never type (!) is not a valid MetaCast type.")),
+                _ => Err(syn::Error::new(punct.span(), "Unexpected tokens: Expected a Type."))
+            },
+            TokenTree::Literal(lit) => Err(syn::Error::new(lit.span(), "Unexpected tokens: Expected a Type."))
+        },
+        _ => Err(syn::Error::new(Span::call_site(), "Unexpected end of input: Expected tokens for Type, but there are none."))
+    }
+}
+
+/// An iterator implementing the **Breadth First Search** algorithm.
+/// 
+/// The iterator can be over [`MetaToken`] or [`TokenTree`].
+struct TokensIterBfs<T: IterBfsElement> {
+    /* Apparently a Vec would perform better than a LinkedList in this case.
+    https://stackoverflow.com/questions/40848918/are-there-queue-and-stack-collections-in-rust */
+    queue: VecDeque<T>,
+}
+impl<T: IterBfsElement> TokensIterBfs<T> {
+    pub fn new(token: T) -> Self {
+        let mut queue = VecDeque::new();
+        // Step 1: Enqueue the root.
+        queue.push_back(token);
+        Self { queue }
+    }
+    /// Same as [`Self::new()`], but allows passing in multiple tokens.
+    pub fn new_multi(tokens: impl IntoIterator<Item = T>) -> Self {
+        let mut queue = VecDeque::new();
+        // Step 1: Enqueue the root.
+        queue.extend(tokens);
+        Self { queue }
+    }
+}
+impl<T: IterBfsElement> Iterator for TokensIterBfs<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Step 2: Get next from queue.
+        let popped = self.queue.pop_front();
+        if let Some(popped) = &popped {
+            // Step 3: Enqueue its children.
+            popped.append_children(&mut self.queue);
+        }
+        popped
+    }
+}
+trait IterBfsElement: Sized {
+    fn append_children(&self, queue: &mut VecDeque<Self>);
+    
+}
+impl IterBfsElement for &MetaToken {
+    fn append_children(&self, queue: &mut VecDeque<Self>) {
+        match self {
+            MetaToken::Group { tokens, .. } => queue.extend(tokens.0.iter()),
+            MetaToken::MetaCast { ty, .. } => queue.extend(ty.0.iter()),
+            // No children
+            MetaToken::MetaVar { .. } => { },
+            MetaToken::Ident(_) => { },
+            MetaToken::Punct(_) => { },
+            MetaToken::Lit(_) => { },
+        }
+    }
+}
+impl IterBfsElement for TokenTree {
+    fn append_children(&self, queue: &mut VecDeque<Self>) {
+        match self {
+            TokenTree::Group(group) => queue.extend(group.stream().into_iter()),
+            // No children
+            TokenTree::Ident(_) => { },
+            TokenTree::Punct(_) => { },
+            TokenTree::Literal(_) => { },
+        }
+    }
+}
+trait ToIterBfs<'a, T: IterBfsElement + 'a> {
+    fn iter_bfs(&'a self) -> TokensIterBfs<T>;
+}
+impl<'a> ToIterBfs<'a, &'a MetaToken> for MetaTokenStream {
+    fn iter_bfs(&'a self) -> TokensIterBfs<&'a MetaToken> {
+        TokensIterBfs::new_multi(self.0.iter())
+    }
+}
+impl<'a> ToIterBfs<'a, Self> for &'a MetaToken {
+    fn iter_bfs(&'a self) -> TokensIterBfs<Self> {
+        TokensIterBfs::new(self)
+    }
+}
+impl ToIterBfs<'_, TokenTree> for TokenStream {
+    fn iter_bfs(&self) -> TokensIterBfs<TokenTree> {
+        TokensIterBfs::new_multi(self.clone().into_iter())
+    }
 }

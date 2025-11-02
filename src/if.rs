@@ -1,7 +1,7 @@
 use super::*;
 use crate::{common::Condition, meta_expr::MetaBlock};
 use either::Either;
-use quote::{TokenStreamExt as _, quote_spanned};
+use quote::quote_spanned;
 use syn::{Block, Ident, Token, Type, spanned::Spanned as _};
 
 pub struct If {
@@ -156,12 +156,7 @@ impl Parse for IsToken {
 /// 
 /// That is, this function outputs the `else if`, condition, and block.
 fn append_if_statement(if_or_elseif: Either<&If, &ElseIf>, tokens: &mut TokenStream) {
-    let if_token;
-    let else_token;
-    let generic_t;
-    let is_token;
-    let condition;
-    let block;
+    let (if_token, else_token, generic_t, is_token, condition, block);
     match if_or_elseif {
         Either::Right(els) => {
             if_token = els.if_token;
@@ -209,16 +204,16 @@ fn append_if_statement(if_or_elseif: Either<&If, &ElseIf>, tokens: &mut TokenStr
             // Clone the same body for each block.
             // Metavariables are resolved to cond_ty
             block.braces.surround(tokens, |tokens| {
-                tokens.append_all(block.expr.to_token_stream(cond_ty))
+                block.expr.to_tokens(cond_ty, tokens);
             });
         }
     } else {
         // No metavariables in the body means we output a single normal `if/else-if` statement
         append_if_tokens(&mut is_first, if_token, else_token, tokens);
         condition.to_tokens(generic_t, is_token.0.span(), tokens);
-        // Provide a fake Type since there are no metavariables to resolve
         block.braces.surround(tokens, |tokens| {
-            tokens.append_all(block.expr.to_token_stream(&Type::Verbatim(TokenStream::new())))
+            // Provide a fake Type since there are no metavariables to resolve
+            block.expr.to_tokens(&Type::Verbatim(TokenStream::new()), tokens);
         });
     }
 }
