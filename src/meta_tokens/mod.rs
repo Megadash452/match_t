@@ -1,4 +1,4 @@
-mod utils;
+mod parse;
 mod stream;
 mod token;
 
@@ -39,7 +39,7 @@ impl MetaExpr {
     /// 
     /// [`MetaVariable`]: MetaToken::MetaVar
     pub fn parse_with_name(input: ParseStream, metavar_name: &str) -> syn::Result<Self> {
-        utils::parse_as_metatokens(TokenStream::parse(input)?, &mut Some(Cow::Borrowed(metavar_name)))
+        parse::parse_as_metatokens(TokenStream::parse(input)?, &mut Some(Cow::Borrowed(metavar_name)))
             .map(|tokens| Self(Rc::new(MetaExprInner {
                 tokens,
                 metavar_name: Some(metavar_name.to_string()),
@@ -60,7 +60,7 @@ impl Parse for MetaExpr {
     /// [`MetaVariable`]: MetaToken::MetaVar
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut metavar_name = None;
-        utils::parse_as_metatokens(TokenStream::parse(input)?, &mut metavar_name)
+        parse::parse_as_metatokens(TokenStream::parse(input)?, &mut metavar_name)
             .map(|tokens| Self(Rc::new(MetaExprInner {
                 tokens,
                 metavar_name: metavar_name.map(Cow::into_owned),

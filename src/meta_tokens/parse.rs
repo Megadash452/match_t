@@ -1,26 +1,6 @@
-use std::borrow::Cow;
-
 use super::*;
+use std::borrow::Cow;
 use quote::ToTokens as _;
-
-pub fn clear_span(stream: TokenStream) -> TokenStream {
-    let mut tokens = TokenStream::new();
-
-    for tt in stream {
-        match tt {
-            TokenTree::Group(group) => {
-                let new_inner = clear_span(group.stream());
-                Group::new(group.delimiter(), new_inner).to_tokens(&mut tokens);
-            },
-            mut tt => {
-                tt.set_span(Span::call_site());
-                tt.to_tokens(&mut tokens);
-            },
-        }
-    }
-
-    tokens
-}
 
 fn advance_by(iter: &mut impl Iterator, i: usize) {
     for _ in 0..i {

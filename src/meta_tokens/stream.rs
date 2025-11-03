@@ -56,7 +56,7 @@ impl MetaTokenStream {
                                So casting something like `[T]` to `[resolved_ty]` is safe. */
                     quote! { unsafe { ::std::mem::transumte::<#from_ty, #to_ty>(#value) } }.to_tokens(stream);
                 },
-                MetaToken::MetaVar { .. } => utils::clear_span(ty.to_token_stream()).to_tokens(stream),
+                MetaToken::MetaVar { .. } => clear_span(ty.to_token_stream()).to_tokens(stream),
                 MetaToken::Ident(ident) => ident.to_tokens(stream),
                 MetaToken::Lit(lit) => lit.to_tokens(stream),
                 MetaToken::Punct(punct) => punct.to_tokens(stream),
@@ -114,6 +114,25 @@ impl Debug for MetaTokenStream {
                 .finish()
         }
     }
+}
+
+pub fn clear_span(stream: TokenStream) -> TokenStream {
+    let mut tokens = TokenStream::new();
+
+    for tt in stream {
+        match tt {
+            TokenTree::Group(group) => {
+                let new_inner = clear_span(group.stream());
+                Group::new(group.delimiter(), new_inner).to_tokens(&mut tokens);
+            },
+            mut tt => {
+                tt.set_span(Span::call_site());
+                tt.to_tokens(&mut tokens);
+            },
+        }
+    }
+
+    tokens
 }
 
 /// An iterator implementing the **Breadth First Search** algorithm.
