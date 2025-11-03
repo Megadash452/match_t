@@ -16,11 +16,11 @@ pub struct If {
 impl Parse for If {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let if_token = input.parse()?;
-        let t = input.parse()?;
+        let t = input.parse::<Type>()?;
+        let metavar_name = t.to_token_stream().to_string();
         let is_token = input.parse()?;
         let condition = input.parse()?;
-        let block = input.parse::<MetaBlock>()?;
-        check_metavar_name(block.expr.metavar_name(), &t)?;
+        let block = MetaBlock::parse_with_name(input, &metavar_name)?;
 
         let mut else_ifs = Vec::new();
         let mut else_stmnt = None;
@@ -104,16 +104,15 @@ pub struct ElseIf {
 }
 impl Parse for ElseIf {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let rtrn = Self {
-            else_token: input.parse()?,
-            if_token: input.parse()?,
-            t: input.parse()?,
-            is_token: input.parse()?,
-            condition: input.parse()?,
-            block: input.parse()?,
-        };
-        check_metavar_name(rtrn.block.expr.metavar_name(), &rtrn.t)?;
-        Ok(rtrn)
+        let else_token = input.parse()?;
+        let if_token = input.parse()?;
+        let t = input.parse::<Type>()?;
+        let metavar_name = t.to_token_stream().to_string();
+        let is_token = input.parse()?;
+        let condition = input.parse()?;
+        let block = MetaBlock::parse_with_name(input, &metavar_name)?;
+
+        Ok(Self { else_token, if_token, t, is_token, condition, block })
     }
 }
 impl Debug for ElseIf {
@@ -216,15 +215,4 @@ fn append_if_statement(if_or_elseif: Either<&If, &ElseIf>, tokens: &mut TokenStr
             block.expr.to_tokens(&Type::Verbatim(TokenStream::new()), tokens);
         });
     }
-}
-
-fn check_metavar_name(metavar: Option<&str>, t: &Type) -> syn::Result<()> {
-    // The metavariables in the body must match the Type named by the user
-    if let Some(name) = metavar {
-        let t_str = t.to_token_stream().to_string();
-        if name != t_str {
-            return Err(syn::Error::new(t.span(), format!("The metavariables (${name}) must match the generic type provided ({t_str}).")));
-        }
-    }
-    Ok(())
 }

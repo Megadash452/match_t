@@ -1,6 +1,7 @@
+use std::borrow::Cow;
+
 use super::*;
 use quote::ToTokens as _;
-use crate::meta_tokens::stream::ToIterBfs as _;
 
 pub fn clear_span(stream: TokenStream) -> TokenStream {
     let mut tokens = TokenStream::new();
@@ -29,49 +30,35 @@ fn advance_by(iter: &mut impl Iterator, i: usize) {
 
 /// Converts all tokens in a [`TokenStream`] into [`MetaToken`].
 /// 
+/// **metavar_name** is the name of the [`MetaVariable`] that will be resolved to a concrete type.
+/// An [`Err`] will be returned if any [`MetaVariable`]s are found with a *different name*.
+/// If **metavar_name** is [`None`], the value will be set to the [`MetaVariable`]'s name that is found (if any).
+/// 
 /// **parsing_type** is set to `true` if a [`MetaCastType`] is being parsed
 /// and should return [`Err`] if another *cast* (`as` keyword) is found.
 ///
-/// Returns [`Err`] if more than 1 **metavariable** names are found.
-pub fn parse_as_metatokens(stream: TokenStream, parsing_type: bool) -> syn::Result<MetaExprInner> {
+/// [`MetaVariable`]: MetaToken::MetaVar
+pub fn parse_as_metatokens(stream: TokenStream, metavar_name: &mut Option<Cow<'_, str>>) -> syn::Result<MetaTokenStream> {
     let mut tokens = MetaTokenStream::new();
-    let mut metavar_name = None::<String>;
-    fn set_metavar_name(metavar_name: &mut Option<String>, obtained_name: Option<&Ident>) -> syn::Result<()> {
-        match (&metavar_name, obtained_name) {
+    let mut token_iter = stream.into_iter();
+    fn set_metavar_name(metavar_name: &mut Option<Cow<'_, str>>, obtained_name: &Ident) -> syn::Result<()> {
+        match &metavar_name {
             // Parsed tokens returned with a metavar_name different from the one set in the current frame.
-            (Some(metavar_name), Some(obtained_name)) => if obtained_name != metavar_name {
+            Some(metavar_name) => if obtained_name != metavar_name {
                 return Err(syn::Error::new(
                     obtained_name.span(),
                     format!("Only one Metavariable/Generic Type name can be used within a branch. Found ${obtained_name} while ${metavar_name} exists.")
                 ));
             },
-            // The metavar_name has not yet been set in the current frame. INherit it from the tokens just parsed.
-            (None, Some(obtained_name)) => *metavar_name = Some(obtained_name.to_string()),
-            // There is nothing to compare the current metavar_name with, so do nothing.
-            (_, None) => { }
+            // The metavar_name has not yet been set.
+            None => *metavar_name = Some(Cow::Owned(obtained_name.to_string())),
         }
         Ok(())
     }
 
-    let mut token_iter = stream.into_iter();
-
     while let Some(tt) = token_iter.next() {
         match tt {
-            TokenTree::Group(group) => {
-                let inner_expr = utils::parse_as_metatokens(group.stream(), parsing_type)?;
-                let obtained_name = inner_expr.metavar_name
-                    .as_ref()
-                    .map(|str| Ident::new(&str, Span::call_site()));
-
-                // This frame inherits the inner MetaExpr's metavar_name (unless it already has one)
-                set_metavar_name(&mut metavar_name, obtained_name.as_ref())?;
-
-                tokens.push(MetaToken::Group {
-                    delim: group.delimiter(),
-                    span: group.delim_span(),
-                    tokens: inner_expr.tokens,
-                })
-            },
+            TokenTree::Group(group) => tokens.push(MetaToken::from_group(group, |stream| parse_as_metatokens(stream, metavar_name))?),
             TokenTree::Punct(punct) => {
                 // Speculatively advance cursor
                 let mut fork = token_iter.clone();
@@ -80,8 +67,7 @@ pub fn parse_as_metatokens(stream: TokenStream, parsing_type: bool) -> syn::Resu
                 && let Some(TokenTree::Ident(ident)) = fork.next() {
                     // Matched a metavariable! Parse the Ident next.
                     token_iter = fork;
-
-                    set_metavar_name(&mut metavar_name, Some(&ident))?;
+                    set_metavar_name(metavar_name, &ident)?;
 
                     tokens.push(MetaToken::MetaVar {
                         dollar: syn::token::Dollar { spans: [punct.span()] },
@@ -96,79 +82,53 @@ pub fn parse_as_metatokens(stream: TokenStream, parsing_type: bool) -> syn::Resu
             },
             TokenTree::Ident(ident) => {
                 if ident == "as" {
-                    if parsing_type {
-                        return Err(syn::Error::new(ident.span(), "Casts are not allowed within the Type of another Cast"));
-                    }
-
                     // Cast Type turns out to be a Rust type with the generic.
                     // Parse tokens for the Type and look for the Generic Ident within the Type.
                     if let Ok(ty) = syn::parse2::<Type>(token_iter.clone().collect()) {
-                        // If a metavariable_name has been set for this frame, look for the generic type within the Type
-                        let generic = if let Some(name) = &metavar_name {
-                            // Look for an Ident with the same name as the metavariable within the parsed tokens.
-                            let mut obtained_name = None;
-                            for token in ty.to_token_stream().iter_bfs() {
-                                if let TokenTree::Ident(ident) = token
-                                && ident == name {
-                                    obtained_name = Some(ident);
-                                    break;
-                                }
+                        let ty_tokens = ty.to_token_stream();
+                        // Parse the syn::Type as MetaTokens, replacing all instances of the generic `T` with the metavariable `$T`.
+                        let ty = if let Some(name) = metavar_name.as_deref() {
+                            let (ty, found_generic_t) = type_to_metatokens(ty_tokens.clone(), name);
+                            // If a generic with metavar_name was not found in the tokens, assume the cast is a normal cast.
+                            if !found_generic_t {
+                                // Ignore anything that was parsed, just add the 'as' token and move on.
+                                tokens.push(MetaToken::Ident(ident));
+                                continue;
                             }
-                            // Set the metavar name for the current frame
-                            set_metavar_name(&mut metavar_name, obtained_name.as_ref())?;
-
-                            match obtained_name {
-                                Some(t) => t,
-                                None => {
-                                    // An Ident with the same name as the metavariable was NOT found in Type, so these tokens do not count as MetaCast.
-                                    // Ignore anything that was parsed, just add the 'as' token and move on.
-                                    tokens.push(MetaToken::Ident(ident));
-                                    continue;
-                                }
-                            }
+                            ty
                         } else {
-                            // MetaVar name has not been set in this frame, so don't know what to look for....
-                            todo!();
-                            let a = 5;
+                            // MetaVar name has not been set, so don't know what to look for....
+                            todo!()
                         };
 
                         // Advance tokens to the length of the parsed tokens
-                        advance_by(&mut token_iter, ty.to_token_stream().into_iter().count());
+                        advance_by(&mut token_iter, ty_tokens.into_iter().count());
 
                         let token = MetaToken::MetaCast {
                             expr: parse_metacast_value(&mut tokens, ident.span())?,
                             as_token: syn::token::As { span: ident.span() },
-                            ty: utils::parse_as_metatokens(ty.to_token_stream(), true)?.tokens,
-                            t: generic.to_string(),
+                            ty,
+                            t: todo!(),
                             cast_ty: MetaCastType::ConcreteToGeneric,
                         };
                         tokens.push(token);
                     } else {
                         // syn::Type failed to parse, so the Type may contain a metavariable. It must be parsed manually.
                         let mut fork = token_iter.clone();
-                        let ty_tokens = parse_metacast_type(&mut fork)
+                        let mut metavar_name_inner = None;
+                        let ty_tokens = parse_metacast_type(&mut fork, &mut metavar_name_inner)
                             .map_err(|err| syn::Error::new(err.span(), format!("Error parsing MetaType: {err}")))?;
 
-                        // Look for the MetaVar (obtained_name) within the parsed tokens.
-                        let mut obtained_name = None;
-                        for token in ty_tokens.iter_bfs() {
-                            if let MetaToken::MetaVar { t, .. } = token {
-                                obtained_name = Some(t.clone());
-                                break;
-                            }
-                        }
-                        // Set the metavar name for the current frame
-                        set_metavar_name(&mut metavar_name, obtained_name.as_ref())?;
-
-                        let metavar_name = match obtained_name {
+                        let obtained_name = match metavar_name_inner {
                             Some(name) => name.to_string(),
-                            // If a Metavar was not found in the tokens, it means the user provided invalid tokens (assumption, not verified)
+                            // If a Metavar was not found in the tokens, it means the user provided invalid tokens
                             None => {
                                 // Ignore anything that was parsed, just add the 'as' token and move on.
                                 tokens.push(MetaToken::Ident(ident));
                                 continue;
                             }
                         };
+                        set_metavar_name(metavar_name, &Ident::new(&obtained_name, Span::call_site()))?;
 
                         // Advance tokens to the length of the parsed tokens
                         token_iter = fork;
@@ -177,7 +137,7 @@ pub fn parse_as_metatokens(stream: TokenStream, parsing_type: bool) -> syn::Resu
                             expr: parse_metacast_value(&mut tokens, ident.span())?,
                             as_token: syn::token::As { span: ident.span() },
                             ty: ty_tokens,
-                            t: metavar_name,
+                            t: obtained_name,
                             cast_ty: MetaCastType::GenericToConcrete,
                         };
                         tokens.push(token);
@@ -190,10 +150,7 @@ pub fn parse_as_metatokens(stream: TokenStream, parsing_type: bool) -> syn::Resu
         }
     }
 
-    Ok(MetaExprInner {
-        tokens,
-        metavar_name,
-    })
+    Ok(tokens)
 }
 
 /// Take previous tokens as value until a certain token is reach, or the end.
@@ -248,12 +205,57 @@ fn parse_metacast_value(tokens: &mut MetaTokenStream, as_token_span: Span) -> sy
     }
     // Put back last token
     value_tokens.push(last_token);
-    // Keep last token to append later
-    if value_tokens.is_empty() {
-        return Err(syn::Error::new(as_token_span, "Error parsing Cast value tokens: MetaTokenStream is empty."));
-    }
 
     Ok(value_tokens)
+}
+
+/// Parses a [`syn::Type`]'s tokens into a [`MetaTokenStream`].
+/// 
+/// Since a [`syn::Type`] does not contain any [`Metavariable`]s or [`MetaCast`][MetaToken::MetaCast],
+/// this function will not look for them and just take the [`TokenTree`] as-is.
+/// 
+/// This function converts all instances of the *generic type* `T` into [`MetaVariable`]s
+/// so that the *generic type* `T` can be later replaced to some *concrete type* for the cast.
+/// 
+/// Returns the [`MetaTokenStream`] and whether an instance of the *generic type* `T` was found,
+/// and thus whether the [`MetaTokenStream`] con.
+/// 
+/// [`MetaVariable`]: MetaToken::MetaVar
+fn type_to_metatokens(ty: TokenStream, metavar_name: &str) -> (MetaTokenStream, bool) {
+    let mut tokens = MetaTokenStream::new();
+    let mut token_iter = ty.to_token_stream().into_iter();
+    let mut found_generic_t = false;
+
+    while let Some(tt) = token_iter.next() {
+        tokens.push(match tt {
+            TokenTree::Group(group) => MetaToken::Group {
+                delim: group.delimiter(),
+                span: group.delim_span(),
+                tokens: {
+                    let (tokens, found) = type_to_metatokens(group.stream(), metavar_name);
+                    if found {
+                        found_generic_t = true;
+                    }
+                    tokens
+                },
+            },
+            TokenTree::Ident(ident) => {
+                if ident == metavar_name {
+                    found_generic_t = true;
+                    MetaToken::MetaVar {
+                        dollar: syn::token::Dollar { spans: [ident.span()] },
+                        t: ident,
+                    }
+                } else {
+                    MetaToken::Ident(ident)
+                }
+            },
+            TokenTree::Punct(punct) => MetaToken::Punct(punct),
+            TokenTree::Literal(lit) => MetaToken::Lit(lit),
+        })
+    }
+
+    (tokens, found_generic_t)
 }
 
 /// MetaTypes (used in [`MetaCast`][MetaToken::MetaCast]) are recursive, so a separate function is required.
@@ -262,9 +264,9 @@ fn parse_metacast_value(tokens: &mut MetaTokenStream, as_token_span: Span) -> sy
 /// 
 /// Returns [`Err`] if the parsed tokens are not a [`MetaCastType`].
 /// That is, the tokens don't contain a [`MetaVar`].
-fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I) -> syn::Result<MetaTokenStream> {
+fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I, metavar_name: &mut Option<Cow<'_, str>>) -> syn::Result<MetaTokenStream> {
     // ZAMNNN this really is some spaghetti code. Could it be worse than yanderedev?
-    fn parse_angle_bracket_group<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I) -> syn::Result<MetaTokenStream> {
+    fn parse_angle_bracket_group<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I, metavar_name: &mut Option<Cow<'_, str>>) -> syn::Result<MetaTokenStream> {
         let mut fork = token_iter.clone();
 
         match fork.next() {
@@ -298,7 +300,7 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I
                 }
 
                 // Parse the collected tokens
-                tokens.extend(parse_as_metatokens(group_tokens, true)?.tokens);
+                tokens.extend(parse_inner(group_tokens, metavar_name)?);
 
                 *token_iter = fork;
 
@@ -315,7 +317,7 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I
     }
 
     /// Can also return tokens of a macro
-    fn parse_path<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I) -> syn::Result<MetaTokenStream> {
+    fn parse_path<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I, metavar_name: &mut Option<Cow<'_, str>>) -> syn::Result<MetaTokenStream> {
         let mut tokens = MetaTokenStream::new();
 
         let mut fork = token_iter.clone();
@@ -325,7 +327,7 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I
                 TokenTree::Group(group) => return Err(syn::Error::new(group.span(), format!("Grouped tokens (with delimiter {:?}) are not allowed in a Type Path.", group.delimiter()))),
                 TokenTree::Punct(punct) => match punct.as_char() {
                     // Treat angle brackets as acceptable Group.
-                    '<' => tokens.extend(parse_angle_bracket_group(&mut fork)?),
+                    '<' => tokens.extend(parse_angle_bracket_group(&mut fork, metavar_name)?),
                     '>' => return Err(syn::Error::new(punct.span(), "Found an unpaired closing angle bracket (>).")),
                     ':' if punct.spacing() == Spacing::Joint => {
                         if let Some(TokenTree::Punct(punct_next)) = fork.next()
@@ -340,7 +342,7 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I
                     // Found macro
                     '!' => match fork.next() {
                         Some(TokenTree::Group(group)) => {
-                            tokens.push(MetaToken::from_group(group, true)?);
+                            tokens.push(MetaToken::from_group(group, |stream| parse_inner(stream, metavar_name))?);
                             *token_iter = fork;
                             return Ok(tokens)
                         },
@@ -367,7 +369,7 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I
         Ok(tokens)
     }
 
-    fn parse_fn<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I) -> syn::Result<MetaTokenStream> {
+    fn parse_fn<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I, metavar_name: &mut Option<Cow<'_, str>>) -> syn::Result<MetaTokenStream> {
         let mut tokens = MetaTokenStream::new();
         let mut fork = token_iter.clone();
 
@@ -375,7 +377,7 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I
         && ident == "for" {
             fork.next().unwrap();
             tokens.push(MetaToken::Ident(ident));
-            tokens.extend(parse_angle_bracket_group(&mut fork)?);
+            tokens.extend(parse_angle_bracket_group(&mut fork, metavar_name)?);
         }
 
         if let Some(TokenTree::Ident(ident)) = fork.clone().next()
@@ -410,7 +412,7 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I
 
         match fork.next() {
             Some(TokenTree::Group(group))
-            if group.delimiter() == Delimiter::Parenthesis => tokens.push(MetaToken::from_group(group, true)?),
+            if group.delimiter() == Delimiter::Parenthesis => tokens.push(MetaToken::from_group(group, |stream| parse_inner(stream, metavar_name))?),
             tt => {
                 let span = match tt {
                     Some(tt) => tt.span(),
@@ -428,13 +430,38 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I
                 tokens.push(MetaToken::Punct(dash));
                 tokens.push(MetaToken::Punct(right_bracket));
                 // RECURSION HERE vvv
-                tokens.extend(parse_metacast_type(&mut fork)?);
+                tokens.extend(parse_metacast_type(&mut fork, metavar_name)?);
             } else {
                 return Err(syn::Error::new(dash.span(), "Unexpected tokens: Expected arrow after dash for return type (...) -> Type"));
             }
         }
 
         *token_iter = fork;
+
+        Ok(tokens)
+    }
+
+    /// Parses the tokens within a `MetaCast`'s type group.
+    /// 
+    /// This will interpret any metavariables found in the tokens,
+    /// but any other tokens will take as-is.
+    fn parse_inner(stream: TokenStream, metavar_name: &mut Option<Cow<'_, str>>) -> syn::Result<MetaTokenStream> {
+        let mut tokens = MetaTokenStream::new();
+        let mut token_iter = stream.into_iter();
+
+        while let Some(tt) = token_iter.next() {
+            tokens.push(match tt {
+                TokenTree::Group(group) => MetaToken::from_group(group, |stream| parse_inner(stream, metavar_name))?,
+                TokenTree::Ident(ident) => {
+                    if ident == "as" {
+                        return Err(syn::Error::new(ident.span(), "Casts are not allowed within the Type of another Cast"));
+                    }
+                    MetaToken::Ident(ident)
+                },
+                TokenTree::Punct(punct) => MetaToken::Punct(punct),
+                TokenTree::Literal(lit) => MetaToken::Lit(lit),
+            })
+        }
 
         Ok(tokens)
     }
@@ -447,21 +474,21 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I
             // Found group: only the group is the type.
             TokenTree::Group(group) => {
                 *token_iter = fork;
-                Ok(utils::parse_as_metatokens(group.stream(), true)?.tokens)
+                parse_inner(group.stream(), metavar_name)
             },
             TokenTree::Ident(ident) => match ident.to_string().as_str() {
-                "for" => parse_fn(token_iter),
-                "fn" => parse_fn(token_iter),
+                "for" => parse_fn(token_iter, metavar_name),
+                "fn" => parse_fn(token_iter, metavar_name),
                 "impl" => Err(syn::Error::new(ident.span(), "Unexpected tokens: 'impl' trait types are not valid MetaCast types.")),
                 "dyn" => Err(syn::Error::new(ident.span(), "Unexpected tokens: 'dyn' trait types are not valid MetaCast types.")),
                 "_" => Err(syn::Error::new(ident.span(), "Unexpected tokens: Infer type (_) is not a valid MetaCast type.")),
-                _ => parse_path(token_iter),
+                _ => parse_path(token_iter, metavar_name),
             },
             TokenTree::Punct(punct) => match punct.as_char() {
                 ':' if punct.spacing() == Spacing::Joint => match fork.next() {
                     Some(TokenTree::Punct(punct))
                     if punct.as_char() == ':' && punct.spacing() == Spacing::Alone
-                        => parse_path(token_iter),
+                        => parse_path(token_iter, metavar_name),
                     // This token is not part of the Type
                     _ => Err(syn::Error::new(punct.span(), "Unexpected tokens: Invalid token ':' while parsing Type."))
                 },
@@ -502,7 +529,7 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I
                     }
 
                     // RECURSION HERE vvv
-                    tokens.extend(parse_metacast_type(&mut fork)?);
+                    tokens.extend(parse_metacast_type(&mut fork, metavar_name)?);
 
                     *token_iter = fork;
 
@@ -526,7 +553,7 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I
                     }
 
                     // RECURSION HERE vvv
-                    tokens.extend(parse_metacast_type(&mut fork)?);
+                    tokens.extend(parse_metacast_type(&mut fork, metavar_name)?);
 
                     *token_iter = fork;
 
@@ -569,7 +596,7 @@ mod tests {
             quote! { *mut ::std::any::MyType },
         ];
         for ty in types {
-            parse_metacast_type(&mut ty.into_iter()).unwrap();
+            parse_metacast_type(&mut ty.into_iter(), &mut None).unwrap();
         }
 
         let fail_types = [
@@ -578,10 +605,10 @@ mod tests {
             quote! { dyn A + B + C + 'static },
             quote! { _ },
             quote! { ! },
-
+            quote! { [T] as [hahah] },
         ];
         for ty in fail_types {
-            parse_metacast_type(&mut ty.into_iter()).unwrap_err();
+            parse_metacast_type(&mut ty.into_iter(), &mut None).unwrap_err();
         }
     }
 }

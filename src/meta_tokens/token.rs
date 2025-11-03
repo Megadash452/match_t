@@ -39,11 +39,12 @@ pub enum MetaToken {
     Lit(Literal),
 }
 impl MetaToken {
-    pub fn from_group(group: Group, parsing_type: bool) -> syn::Result<Self> {
+    /// Converts a [`TokenTree::Group`] to a [`MetaToken::Group`] by parsing the [`Group`]'s inner [`TokenStream`] with a given **parser**.
+    pub fn from_group(group: Group, parser: impl FnOnce(TokenStream) -> syn::Result<MetaTokenStream>) -> syn::Result<Self> {
         Ok(Self::Group {
             delim: group.delimiter(),
             span: group.delim_span(),
-            tokens: utils::parse_as_metatokens(group.stream(), parsing_type)?.tokens,
+            tokens: parser(group.stream())?,
         })
     }
 }
