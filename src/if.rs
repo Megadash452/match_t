@@ -20,7 +20,7 @@ impl Parse for If {
         let metavar_name = t.to_token_stream().to_string();
         let is_token = input.parse()?;
         let condition = input.parse()?;
-        let block = MetaBlock::parse_with_name(input, &metavar_name)?;
+        let block = MetaBlock::parse(input, &metavar_name)?;
 
         let mut else_ifs = Vec::new();
         let mut else_stmnt = None;
@@ -110,7 +110,7 @@ impl Parse for ElseIf {
         let metavar_name = t.to_token_stream().to_string();
         let is_token = input.parse()?;
         let condition = input.parse()?;
-        let block = MetaBlock::parse_with_name(input, &metavar_name)?;
+        let block = MetaBlock::parse(input, &metavar_name)?;
 
         Ok(Self { else_token, if_token, t, is_token, condition, block })
     }

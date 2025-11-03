@@ -2,7 +2,7 @@ mod parse;
 mod stream;
 mod token;
 
-use std::{borrow::Cow, fmt::{Debug, Display, Write as _}, rc::Rc};
+use std::{fmt::{Debug, Display, Write as _}, rc::Rc};
 use proc_macro2::{Group, Delimiter, Ident, Punct, Spacing, Span, TokenStream, TokenTree};
 use syn::{Type, braced, parse::{Parse, ParseStream}, token::Brace};
 use stream::MetaTokenStream;
@@ -33,13 +33,19 @@ impl MetaExpr {
         self.0.metavar_name.as_deref()
     }
     
-    /// Like [`MetaExpr::parse()`], but the caller provides a **metavariable name**
+    /// Like [`Parse::parse()`], but the caller provides a **metavariable name**
     /// so that [`MetaVariable`]s are checked when they are parsed.
     /// This check is necessary because all [`MetaVariable`]s in the same [`MetaExpr`] must have the same **name**.
     /// 
+    /// This function takes *all* the tokens in the [`ParseStream`].
+    /// 
     /// [`MetaVariable`]: MetaToken::MetaVar
-    pub fn parse_with_name(input: ParseStream, metavar_name: &str) -> syn::Result<Self> {
-        parse::parse_as_metatokens(TokenStream::parse(input)?, &mut Some(Cow::Borrowed(metavar_name)))
+    pub fn parse(input: ParseStream, metavar_name: &str) -> syn::Result<Self> {
+        Self::parse_tokens(TokenStream::parse(input)?, metavar_name)
+    }
+    /// Same as [`Self::parse()`], but takes a [`TokenStream`] instead.
+    pub fn parse_tokens(tokens: TokenStream, metavar_name: &str) -> syn::Result<Self> {
+        parse::parse_as_metatokens(tokens, metavar_name)
             .map(|tokens| Self(Rc::new(MetaExprInner {
                 tokens,
                 metavar_name: Some(metavar_name.to_string()),
@@ -49,22 +55,6 @@ impl MetaExpr {
     /// Like [`quote::ToTokens::to_tokens()`], but takes a [`Type`] to resovle [metavariables][MetaToken::MetaVar] to.
     pub fn to_tokens(&self, ty: &Type, tokens: &mut TokenStream) {
         self.0.tokens.to_tokens(ty, tokens)
-    }
-}
-impl Parse for MetaExpr {
-    /// Parse and guess the [`MetaVariable`] name.
-    /// 
-    /// Only use this if you *don't know* the [`MetaVariable`] name.
-    /// If you *do know*, use [`MetaExpr::parse_with_name()`].
-    /// 
-    /// [`MetaVariable`]: MetaToken::MetaVar
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut metavar_name = None;
-        parse::parse_as_metatokens(TokenStream::parse(input)?, &mut metavar_name)
-            .map(|tokens| Self(Rc::new(MetaExprInner {
-                tokens,
-                metavar_name: metavar_name.map(Cow::into_owned),
-            })))
     }
 }
 impl Clone for MetaExpr {
@@ -90,26 +80,17 @@ pub struct MetaBlock {
     pub expr: MetaExpr,
 }
 impl MetaBlock {
-    /// Same as [`MetaExpr::parse_with_name()`], but parses within a [`Brace`].
-    pub fn parse_with_name(input: ParseStream, metavar_name: &str) -> syn::Result<Self> {
-        let inner;
-
-        Ok(Self {
-            braces: braced!(inner in input),
-            expr: MetaExpr::parse_with_name(&inner, metavar_name)?,
-        })
-    }
-}
-impl Parse for MetaBlock {
     /// Same as [`MetaExpr::parse()`], but parses within a [`Brace`].
-    fn parse(input: ParseStream) -> syn::Result<Self> {
+    pub fn parse(input: ParseStream, metavar_name: &str) -> syn::Result<Self> {
         let inner;
 
         Ok(Self {
             braces: braced!(inner in input),
-            expr: inner.parse()?,
+            expr: MetaExpr::parse(&inner, metavar_name)?,
         })
     }
+    // No parse_tokens() because MetaBlock only takes 1 group token.
+    // Taking an entire TokenStream would make no sense.
 }
 impl Display for MetaBlock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

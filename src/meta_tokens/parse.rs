@@ -1,5 +1,4 @@
 use super::*;
-use std::borrow::Cow;
 use quote::ToTokens as _;
 
 fn advance_by(iter: &mut impl Iterator, i: usize) {
@@ -12,13 +11,9 @@ fn advance_by(iter: &mut impl Iterator, i: usize) {
 /// 
 /// **metavar_name** is the name of the [`MetaVariable`] that will be resolved to a concrete type.
 /// An [`Err`] will be returned if any [`MetaVariable`]s are found with a *different name*.
-/// If **metavar_name** is [`None`], the value will be set to the [`MetaVariable`]'s name that is found (if any).
-/// 
-/// **parsing_type** is set to `true` if a [`MetaCastType`] is being parsed
-/// and should return [`Err`] if another *cast* (`as` keyword) is found.
 ///
 /// [`MetaVariable`]: MetaToken::MetaVar
-pub fn parse_as_metatokens(stream: TokenStream, metavar_name: &mut Option<Cow<'_, str>>) -> syn::Result<MetaTokenStream> {
+pub fn parse_as_metatokens(stream: TokenStream, metavar_name: &str) -> syn::Result<MetaTokenStream> {
     let mut tokens = MetaTokenStream::new();
     let mut token_iter = stream.into_iter();
     fn set_metavar_name(metavar_name: &mut Option<Cow<'_, str>>, obtained_name: &Ident) -> syn::Result<()> {
@@ -244,9 +239,9 @@ fn type_to_metatokens(ty: TokenStream, metavar_name: &str) -> (MetaTokenStream, 
 /// 
 /// Returns [`Err`] if the parsed tokens are not a [`MetaCastType`].
 /// That is, the tokens don't contain a [`MetaVar`].
-fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I, metavar_name: &mut Option<Cow<'_, str>>) -> syn::Result<MetaTokenStream> {
+fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I, metavar_name: &str) -> syn::Result<MetaTokenStream> {
     // ZAMNNN this really is some spaghetti code. Could it be worse than yanderedev?
-    fn parse_angle_bracket_group<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I, metavar_name: &mut Option<Cow<'_, str>>) -> syn::Result<MetaTokenStream> {
+    fn parse_angle_bracket_group<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I, metavar_name: &str) -> syn::Result<MetaTokenStream> {
         let mut fork = token_iter.clone();
 
         match fork.next() {
@@ -297,7 +292,7 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I
     }
 
     /// Can also return tokens of a macro
-    fn parse_path<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I, metavar_name: &mut Option<Cow<'_, str>>) -> syn::Result<MetaTokenStream> {
+    fn parse_path<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I, metavar_name: &str) -> syn::Result<MetaTokenStream> {
         let mut tokens = MetaTokenStream::new();
 
         let mut fork = token_iter.clone();
@@ -349,7 +344,7 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I
         Ok(tokens)
     }
 
-    fn parse_fn<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I, metavar_name: &mut Option<Cow<'_, str>>) -> syn::Result<MetaTokenStream> {
+    fn parse_fn<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I, metavar_name: &str) -> syn::Result<MetaTokenStream> {
         let mut tokens = MetaTokenStream::new();
         let mut fork = token_iter.clone();
 
@@ -425,7 +420,7 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I
     /// 
     /// This will interpret any metavariables found in the tokens,
     /// but any other tokens will take as-is.
-    fn parse_inner(stream: TokenStream, metavar_name: &mut Option<Cow<'_, str>>) -> syn::Result<MetaTokenStream> {
+    fn parse_inner(stream: TokenStream, metavar_name: &str) -> syn::Result<MetaTokenStream> {
         let mut tokens = MetaTokenStream::new();
         let mut token_iter = stream.into_iter();
 

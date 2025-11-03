@@ -89,6 +89,7 @@ impl Parse for Match {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let match_token = input.parse()?;
         let t = input.parse::<Type>()?;
+        let metavar_name = t.to_token_stream().to_string();
         let match_body;
         let braces = braced!(match_body in input);
         let mut arms = Vec::new();
@@ -114,7 +115,7 @@ impl Parse for Match {
             }
 
             // Parse normal case
-            let arm = match_body.parse::<MatchArm>()?;
+            let arm = MatchArm::parse(&match_body, &metavar_name)?;
             // The metavariables in the body must match the Type named by the user
             if let Some(name) = arm.body.metavar_name() {
                 let t_str = t.to_token_stream().to_string();
@@ -189,8 +190,9 @@ struct MatchArm {
     body: MetaExpr,
     _comma: Option<Token![,]>,
 }
-impl Parse for MatchArm {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
+impl MatchArm {
+    /// Like [`Parse::parse()`], but requires a **metavariable name**.
+    fn parse(input: ParseStream, metavar_name: &str) -> syn::Result<Self> {
         let case = input.parse()?;
         let arrow_token = input.parse()?;
 
@@ -201,7 +203,7 @@ impl Parse for MatchArm {
         if input.peek(Brace) {
             let inner_body;
             braces = Some(braced!(inner_body in input));
-            body = inner_body.parse()?;
+            body = MetaExpr::parse(&inner_body, metavar_name)?;
             // Arm with braces can have comma, but not required
             comma = input.parse()?;
         } else {
@@ -233,7 +235,7 @@ impl Parse for MatchArm {
             })?;
 
             // Parse MetaExpr from collected tokens
-            body = syn::parse2(tokens)?;
+            body = MetaExpr::parse_tokens(tokens, metavar_name)?;
         }
 
         Ok(Self {
