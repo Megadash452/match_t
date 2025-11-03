@@ -33,7 +33,7 @@ impl MetaExpr {
 }
 impl Parse for MetaExpr {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        utils::parse_all(TokenStream::parse(input)?, false)
+        utils::parse_as_metatokens(TokenStream::parse(input)?, false)
             .map(|inner| Self(Rc::new(inner)))
     }
 }

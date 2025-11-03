@@ -39,19 +39,11 @@ pub enum MetaToken {
     Lit(Literal),
 }
 impl MetaToken {
-    /// See [`MetaExpr::parse_all()`].
-    /// WARNING: Only use when you know that the token is not 'as' or '$', as it will mess up the MetaTokenStream parsing.
-    /// This function is perfectly safe otherwise.
-    pub unsafe fn from_tt(tt: TokenTree, parsing_type: bool) -> syn::Result<Self> {
-        Ok(match tt {
-            TokenTree::Group(group) => Self::Group {
-                delim: group.delimiter(),
-                span: group.delim_span(),
-                tokens: utils::parse_all(group.stream(), parsing_type)?.tokens,
-            },
-            TokenTree::Ident(ident) => Self::Ident(ident),
-            TokenTree::Punct(punct) => Self::Punct(punct),
-            TokenTree::Literal(lit) => Self::Lit(lit),
+    pub fn from_group(group: Group, parsing_type: bool) -> syn::Result<Self> {
+        Ok(Self::Group {
+            delim: group.delimiter(),
+            span: group.delim_span(),
+            tokens: utils::parse_as_metatokens(group.stream(), parsing_type)?.tokens,
         })
     }
 }
