@@ -1,4 +1,5 @@
 use super::*;
+use crate::meta_tokens::MetaExpr;
 use proc_macro2::{Punct, Span};
 use quote::{TokenStreamExt as _, quote, quote_spanned};
 use syn::{Token, Type, punctuated::Punctuated, spanned::Spanned as _};
@@ -78,3 +79,40 @@ impl Display for Condition {
         Ok(())
     }
 }
+
+/// Like [`MetaCast`][crate::meta_tokens::token::MetaCast], converting an **expression** to some *MetaType*,
+/// but only allows converting [from **concrete type** to **generic type**][crate::meta_tokens::token::MetaCastType::ConcreteToGeneric].
+/// 
+/// The **expression** is the [`If`] or [`Match`] that contains this [`TailCast`].
+#[derive(Clone)]
+pub struct TailCast {
+    #[allow(unused)]
+    pub as_token: Token![as],
+    pub ty: MetaExpr,
+}
+impl TailCast {
+    /// Like [`Parse::parse()`], but requires a **metavariable name**.
+    pub fn parse_with_name(input: ParseStream, metavar_name: &str) -> syn::Result<Self> {
+        Ok(Self {
+            as_token: input.parse()?,
+            ty: {
+                let ty = input.parse::<Type>()?;
+                // FIXME: Actually, parse full MetaCast, but throw error on MetaVar or GenericToConcrete.
+                let (ty_tokens, found) = crate::meta_tokens::type_to_metatokens(ty.to_token_stream(), metavar_name);
+                if !found {
+                    return Err(syn::Error::new(ty.span(), format!("Expected type to contain generic type '{metavar_name}'.")));
+                }
+                MetaExpr::from(ty_tokens)
+            }
+        })
+    }
+    /// Like [`Self::parse_with_name()`], but can return [`None`].
+    pub fn parse_optional_with_name(input: ParseStream, metavar_name: &str) -> syn::Result<Option<Self>> {
+        Ok(if input.peek(Token![as]) {
+            Some(Self::parse_with_name(input, metavar_name)?)
+        } else {
+            None
+        })
+    }
+}
+// ToTokens has to be implemented manually by If and Match

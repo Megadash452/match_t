@@ -155,7 +155,7 @@ impl Debug for MetaCast {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum MetaCastType {
     /// `as $T`.
     GenericToConcrete,

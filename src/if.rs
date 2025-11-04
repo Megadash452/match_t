@@ -1,7 +1,7 @@
 use super::*;
-use crate::{common::Condition, meta_tokens::MetaBlock};
+use crate::{common::{Condition, TailCast}, meta_tokens::{MetaBlock, stream::metacast_to_token_stream, token::MetaCastType}};
 use either::Either;
-use quote::quote_spanned;
+use quote::{quote, quote_spanned};
 use syn::{Block, Ident, Token, Type, spanned::Spanned as _};
 
 pub struct If {
@@ -25,22 +25,25 @@ impl Parse for If {
         let mut else_ifs = Vec::new();
         let mut else_stmnt = None;
 
-        while !input.is_empty() {
-            if input.peek(Token![else]) {
-                if input.peek2(Token![if]) {
-                    // Encountered else-if
-                    else_ifs.push(input.parse()?);
-                } else {
-                    // Encountered else
-                    let new = input.parse::<Else>()?;
-                    match else_stmnt {
-                        Some(_) => return Err(syn::Error::new(new.else_token.span, "Two 'else' statements are not allowed")),
-                        None => else_stmnt = Some(new),
-                    }
-                }
+        while input.peek(Token![else]) {
+            if input.peek2(Token![if]) {
+                // Encountered else-if
+                else_ifs.push(input.parse()?);
             } else {
-                return Err(input.error("Invalid tokens: 'else' should be the last statement"));
+                // Encountered else
+                let new = Else::parse_with_name(input, &metavar_name)?;
+                match else_stmnt {
+                    Some(_) => return Err(syn::Error::new(new.else_token.span, "Two 'else' statements are not allowed")),
+                    None => else_stmnt = Some(new),
+                }
             }
+        }
+
+        if input.peek(Token![as]) {
+            return Err(syn::Error::new(input.span(), "Tail MetaCast (as ...) is only available if the If statement has an 'else' branch"));
+        }
+        if !input.is_empty() {
+            return Err(syn::Error::new(input.span(), "Unexpected tokens: If statement can't have any more tokens"));
         }
 
         Ok(Self {
@@ -56,10 +59,13 @@ impl Parse for If {
 }
 impl ToTokens for If {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        append_if_statement(Either::Left(self), tokens);
+        let tail_cast = self.else_stmnt.as_ref()
+            .and_then(|els| els.tail_cast.as_ref());
+
+        append_if_statement(Either::Left(self), tail_cast, tokens);
 
         for else_if in &self.else_ifs {
-            append_if_statement(Either::Right(else_if), tokens);
+            append_if_statement(Either::Right(else_if), tail_cast, tokens);
         }
 
         if let Some(else_stmnt) = &self.else_stmnt {
@@ -128,12 +134,15 @@ pub struct Else {
     pub else_token: Token![else],
     pub block: Block,
     // Don't embed else-ifs here (make different type ElseIf) to avoid recursion.
+    pub tail_cast: Option<TailCast>,
 }
-impl Parse for Else {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
+impl Else {
+    /// Like [`Parse::parse()`], but requires a **metavariable name**.
+    fn parse_with_name(input: ParseStream, metavar_name: &str) -> syn::Result<Self> {
         Ok(Self {
             else_token: input.parse()?,
             block: input.parse()?,
+            tail_cast: TailCast::parse_optional_with_name(input, metavar_name)?,
         })
     }
 }
@@ -154,7 +163,7 @@ impl Parse for IsToken {
 /// Appends Rust tokens of a single [`If`] or [`ElseIf`] statement.
 /// 
 /// That is, this function outputs the `else if`, condition, and block.
-fn append_if_statement(if_or_elseif: Either<&If, &ElseIf>, tokens: &mut TokenStream) {
+fn append_if_statement(if_or_elseif: Either<&If, &ElseIf>, tail_cast: Option<&TailCast>, tokens: &mut TokenStream) {
     let (if_token, else_token, generic_t, is_token, condition, block);
     match if_or_elseif {
         Either::Right(els) => {
@@ -194,7 +203,7 @@ fn append_if_statement(if_or_elseif: Either<&If, &ElseIf>, tokens: &mut TokenStr
         }
     }
 
-    if block.expr.metavar_name().is_some() {
+    if block.expr.contains_metavars() || tail_cast.is_some() {
         // When an if's block has a metavariable, each condition must be put in a different `else-if` block.
         // The metavar_name check is done in Parse
         for cond_ty in condition {
@@ -202,8 +211,18 @@ fn append_if_statement(if_or_elseif: Either<&If, &ElseIf>, tokens: &mut TokenStr
             Condition::single_to_tokens(cond_ty, generic_t, is_token.0.span(), tokens);
             // Clone the same body for each block.
             // Metavariables are resolved to cond_ty
-            block.braces.surround(tokens, |tokens| {
-                block.expr.to_tokens(cond_ty, tokens);
+            block.braces.surround(tokens, |tokens| match tail_cast {
+                // If macro input contains an outer/tail cast, the transmute is done in every branch
+                Some(tail_cast) => {
+                    let expr = block.expr.to_token_stream(cond_ty);
+                    let cast = metacast_to_token_stream(quote_spanned!(expr.span()=> __result), &tail_cast.ty, cond_ty, generic_t, MetaCastType::ConcreteToGeneric);
+                    quote! {
+                        // Put block in a separate local variable to prevent the entire block from being in an unsafe block
+                        let __result = { #expr };
+                        #cast
+                    }.to_tokens(tokens)
+                }, 
+                None => block.expr.to_tokens(cond_ty, tokens),
             });
         }
     } else {

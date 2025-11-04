@@ -110,7 +110,7 @@ fn parse_metacast(token_iter: &mut (impl Iterator<Item = TokenTree> + Clone), pr
         };
 
         Ok(Some(MetaCast {
-            expr: parse_metacast_value(prev_tokens, ident.span())?,
+            expr: parse_metacast_value(prev_tokens),
             as_token: syn::token::As { span: ident.span() },
             ty,
             t: metavar_name.to_string(),
@@ -122,12 +122,14 @@ fn parse_metacast(token_iter: &mut (impl Iterator<Item = TokenTree> + Clone), pr
 }
 
 /// Take previous tokens as value until a certain token is reach, or the end.
-fn parse_metacast_value(tokens: &mut MetaTokenStream, as_token_span: Span) -> syn::Result<MetaTokenStream> {
+/// 
+/// Keep in mind that this can return an **empty** [`MetaTokenStream`].
+fn parse_metacast_value(tokens: &mut MetaTokenStream) -> MetaTokenStream {
     let mut value_tokens = MetaTokenStream::new();
     // Keep last token to append later.
-    // Teh loop's first element should be the seocnd to last token.
+    // The loop's first element should be the second to last token.
     if tokens.is_empty() {
-        return Err(syn::Error::new(as_token_span, "There must be a Cast value *before* the 'as' keyword."));
+        return value_tokens;
     }
     let last_token = {
         let i = tokens.len() - 1;
@@ -174,7 +176,7 @@ fn parse_metacast_value(tokens: &mut MetaTokenStream, as_token_span: Span) -> sy
     // Put back last token
     value_tokens.push(last_token);
 
-    Ok(value_tokens)
+    value_tokens
 }
 
 /// Parses a [`syn::Type`]'s tokens into a [`MetaTokenStream`].
@@ -187,7 +189,9 @@ fn parse_metacast_value(tokens: &mut MetaTokenStream, as_token_span: Span) -> sy
 /// 
 /// Returns the [`MetaTokenStream`] and whether an instance of the *generic type* `T` was found,
 /// and thus whether the [`MetaTokenStream`] containes any [`MetaVar`]s.
-fn type_to_metatokens(ty: TokenStream, metavar_name: &str) -> (MetaTokenStream, bool) {
+
+// FIXME: this will convert a `T` component of a path like `std::something::T` to a metavariable `std::something::$T`. This is wrong.
+pub fn type_to_metatokens(ty: TokenStream, metavar_name: &str) -> (MetaTokenStream, bool) {
     let mut tokens = MetaTokenStream::new();
     let mut token_iter = ty.to_token_stream().into_iter();
     let mut found_generic_t = false;
@@ -230,6 +234,8 @@ fn type_to_metatokens(ty: TokenStream, metavar_name: &str) -> (MetaTokenStream, 
 /// 
 /// Returns [`Err`] if the parsed tokens are not a [`MetaCastType`].
 /// That is, the tokens don't contain a [`MetaVar`].
+
+// FIXME: this will convert a `T` component of a path like `std::something::T` to a metavariable `std::something::$T`. This is wrong.
 fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I, metavar_name: &str) -> syn::Result<MetaTokenStream> {
     // ZAMNNN this really is some spaghetti code. Could it be worse than yanderedev?
     fn parse_angle_bracket_group<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I, metavar_name: &str) -> syn::Result<MetaTokenStream> {

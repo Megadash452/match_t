@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    common::Condition,
+    common::{Condition, TailCast},
     r#if::{Else, ElseIf, IsToken},
     meta_tokens::{MetaBlock, MetaExpr},
 };
@@ -81,6 +81,7 @@ impl Match {
                             stmts: vec![syn::Stmt::Expr(default_arm.expr.clone(), None)],
                         },
                     },
+                    tail_cast: default_arm.tail_cast.clone(),
                 }),
         })
     }
@@ -104,6 +105,8 @@ impl Parse for Match {
                     expr: match_body.parse()?,
                     // Comma is optional at the last arm
                     _comma: match_body.parse()?,
+                    // Parse a potential TailCast *outside* the match braces.
+                    tail_cast: TailCast::parse_optional_with_name(input, &metavar_name)?,
                 });
 
                 // default_case must also be the LAST case
@@ -115,20 +118,14 @@ impl Parse for Match {
             }
 
             // Parse normal case
-            let arm = MatchArm::parse(&match_body, &metavar_name)?;
-            // The metavariables in the body must match the Type named by the user
-            if let Some(name) = arm.body.metavar_name() {
-                let t_str = t.to_token_stream().to_string();
-                if name != t_str {
-                    return Err(syn::Error::new(t.span(), format!("The metavariables (${name}) must match the generic type provided ({t_str}).")));
-                }
-            }
-
-            arms.push(arm);
+            arms.push(MatchArm::parse_with_name(&match_body, &metavar_name)?);
         }
 
+        if input.peek(Token![as]) {
+            return Err(syn::Error::new(input.span(), "Tail MetaCast (as ...) is only available if the Match statement has a default (_) arm."));
+        }
         if !input.is_empty() {
-            return Err(input.error("Unexpected tokens: 'match' only has 1 body; no other expressions are allowed."));
+            return Err(syn::Error::new(input.span(), "Unexpected tokens: Match statement can't have any more tokens"));
         }
 
         Ok(Self {
@@ -192,7 +189,7 @@ struct MatchArm {
 }
 impl MatchArm {
     /// Like [`Parse::parse()`], but requires a **metavariable name**.
-    fn parse(input: ParseStream, metavar_name: &str) -> syn::Result<Self> {
+    fn parse_with_name(input: ParseStream, metavar_name: &str) -> syn::Result<Self> {
         let case = input.parse()?;
         let arrow_token = input.parse()?;
 
@@ -260,4 +257,6 @@ struct DefaultArm {
     _arrow: Token![=>],
     expr: Expr,
     _comma: Option<Token![,]>,
+    // Putting this here and not in Match because this should only be parseable if the DefaultArm is present.
+    tail_cast: Option<TailCast>,
 }

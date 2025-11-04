@@ -1,9 +1,7 @@
-use std::{collections::VecDeque, ops::{Deref, DerefMut}, str::FromStr as _};
-
+use super::*;
 use proc_macro2::Group;
 use quote::{quote, ToTokens as _};
-
-use super::*;
+use std::{collections::VecDeque, iter::FusedIterator, ops::{Deref, DerefMut}, str::FromStr as _};
 
 pub struct MetaTokenStream(Vec<MetaToken>);
 impl MetaTokenStream {
@@ -11,17 +9,25 @@ impl MetaTokenStream {
         Self(Vec::new())
     }
 
+    pub fn contains_metavars(&self) -> bool {
+        self.iter_bfs()
+            // Also include MetaCast because they will always contain metavariables.
+            // It should still hit even if we don't include MetaCast, but it's just to make the search a bit faster.
+            .find(|&token| matches!(token, MetaToken::MetaVar(_) | MetaToken::MetaCast(_)))
+            .is_some()
+    }
+
     /// Converts the [`MetaTokenStream`] back to a normal Rust [`TokenStream`].
     ///
     /// The **metavariables** (if any) are resolved to the **concrete type** that is passed in.
-    fn to_token_stream(&self, ty: &Type) -> TokenStream {
+    pub fn to_token_stream(&self, resolved_ty: &Type) -> TokenStream {
         let mut stream = TokenStream::new();
-        self.to_tokens(ty, &mut stream);
+        self.to_tokens(resolved_ty, &mut stream);
         stream
     }
 
     /// Same as [`Self::to_token_stream()`], but appends the tokens directly to an existing [`TokenStream`].
-    pub fn to_tokens(&self, ty: &Type, stream: &mut TokenStream) {
+    pub fn to_tokens(&self, resolved_ty: &Type, stream: &mut TokenStream) {
         for meta_token in self.0.iter() {
             match meta_token {
                 MetaToken::Group {
@@ -30,33 +36,25 @@ impl MetaTokenStream {
                     tokens,
                 } => {
                     let mut inner_stream = TokenStream::new();
-                    tokens.to_tokens(ty, &mut inner_stream);
+                    tokens.to_tokens(resolved_ty, &mut inner_stream);
                     let mut group = Group::new(*delim, inner_stream);
                     group.set_span(span.join());
                     group.to_tokens(stream);
                 },
-                MetaToken::MetaCast(MetaCast { expr, ty: ty_tokens, t, cast_ty, .. }) => {
-                    let (from_ty, to_ty);
-                    let generic_ty = ty_tokens.to_token_stream(&Type::Verbatim(TokenStream::from_str(t).unwrap()));
-                    let resolved_ty = ty_tokens.to_token_stream(ty);
-                    match cast_ty {
-                        MetaCastType::GenericToConcrete => {
-                            from_ty = generic_ty;
-                            to_ty = resolved_ty;
-                        },
-                        MetaCastType::ConcreteToGeneric => {
-                            from_ty = resolved_ty;
-                            to_ty = generic_ty;
-                        },
-                    }
-
-                    let value = expr.to_token_stream(ty);
-                    
-                    /* SAFETY: We know that `T` is the **resolved_ty** because we checked it with TypeId.
-                               So casting something like `[T]` to `[resolved_ty]` is safe. */
-                    quote! { unsafe { ::std::mem::transmute::<#from_ty, #to_ty>(#value) } }.to_tokens(stream);
-                },
-                MetaToken::MetaVar { .. } => clear_span(ty.to_token_stream()).to_tokens(stream),
+                MetaToken::MetaCast(MetaCast {
+                    expr,
+                    ty: ty_tokens,
+                    t: metavar_name,
+                    cast_ty,
+                    ..
+                }) => metacast_to_token_stream(
+                    expr.to_token_stream(resolved_ty),
+                    ty_tokens,
+                    resolved_ty,
+                    &Type::Verbatim(TokenStream::from_str(metavar_name).unwrap()),
+                    *cast_ty
+                ).to_tokens(stream),
+                MetaToken::MetaVar { .. } => clear_span(resolved_ty.to_token_stream()).to_tokens(stream),
                 MetaToken::Ident(ident) => ident.to_tokens(stream),
                 MetaToken::Lit(lit) => lit.to_tokens(stream),
                 MetaToken::Punct(punct) => punct.to_tokens(stream),
@@ -135,6 +133,26 @@ pub fn clear_span(stream: TokenStream) -> TokenStream {
     tokens
 }
 
+pub fn metacast_to_token_stream(value: TokenStream, cast_ty_tokens: &MetaTokenStream, resolved_ty: &Type, generic_t: &Type, cast_ty: MetaCastType) -> TokenStream {
+    let (from_ty, to_ty);
+    let generic_ty = cast_ty_tokens.to_token_stream(generic_t);
+    let resolved_ty = cast_ty_tokens.to_token_stream(resolved_ty);
+    match cast_ty {
+        MetaCastType::GenericToConcrete => {
+            from_ty = generic_ty;
+            to_ty = resolved_ty;
+        },
+        MetaCastType::ConcreteToGeneric => {
+            from_ty = resolved_ty;
+            to_ty = generic_ty;
+        },
+    }
+    
+    /* SAFETY: We know that `T` is the **resolved_ty** because we checked it with TypeId.
+                So casting something like `[T]` to `[resolved_ty]` is safe. */
+    quote! { unsafe { ::std::mem::transmute::<#from_ty, #to_ty>(#value) } }
+}
+
 /// An iterator implementing the **Breadth First Search** algorithm.
 /// 
 /// The iterator can be over [`MetaToken`] or [`TokenTree`].
@@ -171,6 +189,7 @@ impl<T: IterBfsElement> Iterator for TokensIterBfs<T> {
         popped
     }
 }
+impl<T: IterBfsElement> FusedIterator for TokensIterBfs<T> { }
 pub trait IterBfsElement: Sized {
     fn append_children(&self, queue: &mut VecDeque<Self>);
 }
@@ -178,7 +197,11 @@ impl IterBfsElement for &MetaToken {
     fn append_children(&self, queue: &mut VecDeque<Self>) {
         match self {
             MetaToken::Group { tokens, .. } => queue.extend(tokens.0.iter()),
-            MetaToken::MetaCast(metacast) => queue.extend(metacast.ty.0.iter()),
+            MetaToken::MetaCast(metacast) => {
+                queue.extend(metacast.expr.0.iter());
+                // TODO: make metacast.as_token an Ident so it can be added in the BFS
+                queue.extend(metacast.ty.0.iter());
+            },
             // No children
             MetaToken::MetaVar(_) => { },
             MetaToken::Ident(_) => { },

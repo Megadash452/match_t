@@ -1,36 +1,29 @@
 mod parse;
-mod stream;
-mod token;
+pub mod stream;
+pub mod token;
 
-use std::{fmt::{Debug, Display, Write as _}, rc::Rc};
+use std::{fmt::{Debug, Display, Write as _}, ops::Deref, rc::Rc};
 use proc_macro2::{Group, Delimiter, Ident, Punct, Spacing, Span, TokenStream, TokenTree};
 use syn::{Type, braced, parse::{Parse, ParseStream}, token::Brace};
 use stream::MetaTokenStream;
 use token::{MetaToken, MetaVar, MetaCast, MetaCastType};
+pub use parse::type_to_metatokens;
 
-/// Akin to an [`Expr`], a [`MetaExpr`] is an expression of rust code that contains a *type* **metavariable** that must be resolved to a *concrete type*.
+/// Akin to an [`Expr`][syn::Expr], a [`MetaExpr`] is an expression of rust code that contains a *type* **metavariable** that must be resolved to a *concrete type*.
 ///
 /// A [`MetaExpr`] is a modified version of a [`TokenStream`] with the ability to hold custom tokens.
 /// The custom token is a [`MetaVar`], which is a placeholder for a **concrete type**.
 /// When a [`MetaExpr`] is converted [to `TokenStream`][MetaExpr::to_tokens()],
 /// all [`MetaVar`] placeholders are converted to the **concrete type**.
-/// 
-/// A [`MetaExpr`] is a series of [`TokenStream`] with [`MetaVar`] placeholders in between.
-/// When the **metavariables** are resolved to a *concrete type*,
-/// the tokens are concatenated together to form a single [`TokenStream`].
 ///
 /// [`MetaExpr`]s can only use *one single* **metavariable** name.
 /// This means that if the [`MetaExpr`] has tokens `$T`, it can't also have `$G`.
 /// It can have multiple instances of the **metavariable**, but all must have the same name.
 ///
-/// The [`MetaExprInner`] is wrapped in an [`Rc`] because *deep clones* of the `TokenTree` are unnecessary work,
-/// and since [`MetaExprInner`] is *immutable*, it's best to have all clones share the same `TokenTree`.
-pub struct MetaExpr(Rc<MetaExprInner>);
+/// The [`MetaTokenStream`] is wrapped in an [`Rc`] because *deep clones* of the `TokenTree` are unnecessary work,
+/// and since [`MetaTokenStream`] is *immutable*, it's best to have all clones share the same `TokenTree`.
+pub struct MetaExpr(Rc<MetaTokenStream>);
 impl MetaExpr {
-    pub fn metavar_name(&self) -> Option<&str> {
-        self.0.metavar_name.as_deref()
-    }
-    
     /// Like [`Parse::parse()`], but the caller provides a **metavariable name**
     /// so that [`MetaVar`]s are checked when they are parsed.
     /// This check is necessary because all [`MetaVar`]s in the same [`MetaExpr`] must have the same **name**.
@@ -42,15 +35,7 @@ impl MetaExpr {
     /// Same as [`Self::parse()`], but takes a [`TokenStream`] instead.
     pub fn parse_tokens(tokens: TokenStream, metavar_name: &str) -> syn::Result<Self> {
         parse::parse_as_metatokens(tokens, metavar_name)
-            .map(|tokens| Self(Rc::new(MetaExprInner {
-                tokens,
-                metavar_name: Some(metavar_name.to_string()),
-            })))
-    }
-
-    /// Like [`quote::ToTokens::to_tokens()`], but takes a [`Type`] to resovle [`MetaVar`]s to.
-    pub fn to_tokens(&self, ty: &Type, tokens: &mut TokenStream) {
-        self.0.tokens.to_tokens(ty, tokens)
+            .map(|tokens| Self(Rc::new(tokens)))
     }
 }
 impl Clone for MetaExpr {
@@ -58,14 +43,26 @@ impl Clone for MetaExpr {
         Self(Rc::clone(&self.0))
     }
 }
+impl From<MetaTokenStream> for MetaExpr {
+    fn from(value: MetaTokenStream) -> Self {
+        Self(Rc::new(value))
+    }
+}
+impl Deref for MetaExpr {
+    type Target = MetaTokenStream;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 impl Display for MetaExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        <MetaTokenStream as Display>::fmt(&self.0.tokens, f)
+        <MetaTokenStream as Display>::fmt(&self.0, f)
     }
 }
 impl Debug for MetaExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        <MetaExprInner as Debug>::fmt(&self.0, f)
+        <MetaTokenStream as Debug>::fmt(&self.0, f)
     }
 }
 
@@ -101,19 +98,5 @@ impl Debug for MetaBlock {
             .field("braces", &"Braces { }")
             .field("expr", &self.expr)
             .finish()
-    }
-}
-
-#[derive(Debug)]
-struct MetaExprInner {
-    tokens: MetaTokenStream,
-    /// The *name* of the **metavariable** used in the *tokens* (if any).
-    ///
-    /// For example, if the *tokens* contains `$T`, then the *name* is `"T"`.
-    metavar_name: Option<String>,
-}
-impl Display for MetaExprInner {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        <MetaTokenStream as Display>::fmt(&self.tokens, f)
     }
 }
