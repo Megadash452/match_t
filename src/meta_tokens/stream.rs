@@ -147,10 +147,18 @@ pub fn metacast_to_token_stream(value: TokenStream, cast_ty_tokens: &MetaTokenSt
             to_ty = generic_ty;
         },
     }
-    
+
     /* SAFETY: We know that `T` is the **resolved_ty** because we checked it with TypeId.
                 So casting something like `[T]` to `[resolved_ty]` is safe. */
-    quote! { unsafe { ::std::mem::transmute::<#from_ty, #to_ty>(#value) } }
+    // Taken from https://github.com/funnsam/stable-intrinsics/blob/586a139ccb758488f109daf5165ecef574723b3e/src/lib.rs#L170
+    quote! { {
+        let __value = (#value);
+        unsafe {
+            let __dst = ::core::mem::transmute::<*const #from_ty, *const #to_ty>(&(__value) as *const _);
+            ::core::mem::forget(__value);
+            ::core::ptr::read(__dst)
+        }
+    } }
 }
 
 /// An iterator implementing the **Breadth First Search** algorithm.

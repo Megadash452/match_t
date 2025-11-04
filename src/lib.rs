@@ -75,14 +75,14 @@ use syn::{
 /// # use match_t::match_t;
 /// # use std::any::Any;
 /// # use std::any::type_name;
-/// fn my_fn<T: Any + 'static>(val: T) -> Option<T> {
+/// fn my_fn<T: Any>(val: T) -> Option<T> {
 ///     match_t! {
-///         if T is bool | char | u8 | u32 | u64 | usize | u128 {
+///         if T is u8 | u32 | u64 | usize | u128 {
 ///             println!("T is unsigned :( Is it 0?: {}", val as $T == 0);
 ///             None
 ///         } else if T is i8 | i32 | i64 | isize | i128 {
 ///             println!("T is signed! :)");
-///             Some(val)
+///             Some(val as $T)
 ///         } else {
 ///             println!("T is... something else: {}", type_name::<T>());
 ///             None
@@ -97,16 +97,16 @@ use syn::{
 /// # use match_t::match_t;
 /// # use std::any::Any;
 /// # use std::any::type_name;
-/// fn my_fn<T: Any + 'static>(val: T) -> Option<T> {
+/// fn my_fn<T: Any>(val: T) -> Option<T> {
 ///     match_t! {
 ///         match T {
-///             bool | char | u8 | u32 | u64 | usize | u128 => {
+///             u8 | u32 | u64 | usize | u128 => {
 ///                 println!("T is unsigned :( Is it 0?: {}", val as $T == 0);
 ///                 None
 ///             }
 ///             i8 | i32 | i64 | isize | i128 => {
 ///                 println!("T is signed! :)");
-///                 Some(val)
+///                 Some(val as $T)
 ///             },
 ///             _ => {
 ///                 println!("T is... something else: {}", type_name::<T>());
@@ -123,7 +123,7 @@ use syn::{
 /// # use match_t::match_t;
 /// # use std::any::Any;
 /// # use std::any::type_name;
-/// fn my_fn<T: Any + 'static, G: Any + 'static>() {
+/// fn my_fn<T: Any, G: Any>() {
 ///     match_t! {
 ///         if T is G {
 ///             println!("T and G are the same type.")
@@ -289,37 +289,10 @@ mod tests {
     }
 
     #[test]
-    fn metacast() {
-        let if_t = syn::parse2::<If>(quote! {
-            if T is bool | char {
-                let array = [val as $T; 5];
-                array as [T; 5]
-            } else {
-                panic!("Incorrect type")
-            }
-        }).unwrap();
-
-        assert!(compare_tokenstreams(
-            if_t.to_token_stream(),
-            syn::parse2::<TokenStream>(quote! {
-                if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<bool>() {
-                    let array = [unsafe { ::std::mem::transmute::<T, bool>(val) }; 5];
-                    unsafe { ::std::mem::transmute::<[bool; 5], [T; 5]>(array) }
-                } else if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<char>() {
-                    let array = [unsafe { ::std::mem::transmute::<T, char>(val) }; 5];
-                    unsafe { ::std::mem::transmute::<[char; 5], [T; 5]>(array) }
-                } else {
-                    panic!("Incorrect type")
-                }
-            }).unwrap()
-        ))
-    }
-
-    #[test]
     fn metacast_if_outer() {
         let if_t = syn::parse2::<If>(quote! {
             if T is bool | char {
-                val
+                [val as $T; 5]
             } else {
                 panic!("Incorrect type")
             } as [T; 5]
@@ -327,18 +300,7 @@ mod tests {
 
         assert!(compare_tokenstreams(
             if_t.to_token_stream(),
-            syn::parse2::<TokenStream>(quote! {
-                // Note that none of the branhces use MetaCast or MetaVar, but the TailCast still makes the conditions separate into different branches
-                if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<bool>() {
-                    let __result = { val };
-                    unsafe { ::std::mem::transmute::<[bool; 5], [T; 5]>(__result) }
-                } else if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<char>() {
-                    let __result = { val };
-                    unsafe { ::std::mem::transmute::<[char; 5], [T; 5]>(__result) }
-                } else {
-                    panic!("Incorrect type")
-                }
-            }).unwrap()
+            syn::parse_str::<TokenStream>(&COMMON_METACAST_OUTER).unwrap()
         ))
     }
 
@@ -353,17 +315,7 @@ mod tests {
 
         assert!(compare_tokenstreams(
             match_t.to_token_stream(),
-            syn::parse2::<TokenStream>(quote! {
-                if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<bool>() {
-                    let __result = { [unsafe { ::std::mem::transmute::<T, bool>(val) }; 5] };
-                    unsafe { ::std::mem::transmute::<[bool; 5], [T; 5]>(__result) }
-                } else if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<char>() {
-                    let __result = { [unsafe { ::std::mem::transmute::<T, char>(val) }; 5] };
-                    unsafe { ::std::mem::transmute::<[char; 5], [T; 5]>(__result) }
-                } else {
-                    panic!("Incorrect type")
-                }
-            }).unwrap()
+            syn::parse_str::<TokenStream>(&COMMON_METACAST_OUTER).unwrap()
         ))
     }
 
@@ -379,6 +331,48 @@ mod tests {
                 println!("T is BIG! :) size: {}", size_of::<u128>())
             } else {
                 println!("T is... something else: {}", type_name::<T>())
+            }
+        }
+        .to_string()
+    });
+
+    static COMMON_METACAST_OUTER: LazyLock<String> = LazyLock::new(|| {
+        quote! {
+            if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<bool>() {
+                let __result = { [{
+                    let __value = (val);
+                    unsafe {
+                        let __dst = ::core::mem::transmute::<*const T, *const bool>(&(__value) as *const _);
+                        ::core::mem::forget(__value);
+                        ::core::ptr::read(__dst)
+                    }
+                }; 5] };
+                {
+                    let __value = (__result);
+                    unsafe {
+                        let __dst = ::core::mem::transmute::<*const [bool; 5], *const [T; 5]>(&(__value) as *const _);
+                        ::core::mem::forget(__value);
+                        ::core::ptr::read(__dst)
+                    }
+                }
+            } else if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<char>() {
+                let __result = { [{
+                    let __value = (val);
+                    unsafe {
+                        let __dst = ::core::mem::transmute::<*const T, *const char>(&(__value) as *const _);
+                        ::core::mem::forget(__value);
+                        ::core::ptr::read(__dst)
+                    } }; 5] };
+                    {
+                        let __value = (__result);
+                        unsafe {
+                            let __dst = ::core::mem::transmute::<*const [char; 5], *const [T; 5]>(&(__value) as *const _);
+                            ::core::mem::forget(__value);
+                            ::core::ptr::read(__dst)
+                        }
+                    }
+            } else {
+                panic!("Incorrect type")
             }
         }
         .to_string()

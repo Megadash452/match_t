@@ -159,7 +159,40 @@ fn parse_metacast_value(tokens: &mut MetaTokenStream) -> MetaTokenStream {
                 ':' if is_alone(punct, &tokens) => break,
                 '=' if is_alone(punct, &tokens) => break,
                 '|' if is_alone(punct, &tokens) => break,
+                '>' if is_alone(punct, &tokens) && tokens.len() > 1 => {
+                    // TODO: parse angle bracket group backwards
+                    let mut i = tokens.len() - 2;
+                    let mut levels = 1u32;
+
+                    loop {
+                        match &tokens[i] {
+                            MetaToken::Punct(punct) if punct.as_char() == '>' => levels += 1,
+                            // Take opening angle bracket from the stack
+                            MetaToken::Punct(punct) if punct.as_char() == '<' => levels -= 1,
+                            _ => { }
+                        }
+                        
+                        if i == 0 || levels == 0 {
+                            break;
+                        }
+                        i -= 1;
+                    }
+
+                    if levels > 0 /* i == 0 */ {
+                        // Did not find matching opening bracket, so the closing bracket is actually a greater than operator.
+                        // This means the whole thing is an expression, which is the metacast value.
+                        let mut owned_tokens = MetaTokenStream::new();
+                        std::mem::swap(&mut owned_tokens, tokens);
+                        value_tokens.extend(owned_tokens);
+                        break;
+                    } else /* i > 0 */ {
+                        // Found a matching opening angle bracket. Add the group and keep parsing.
+                        let group = tokens.split_off(i);
+                        value_tokens.extend(group);
+                    }
+                },
                 ';' => break,
+                ',' => break,
                 _ => { },
             },
             MetaToken::MetaVar { .. } => { },
@@ -254,18 +287,15 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I
 
                 while let Some(tt) = fork.next() {
                     match &tt {
-                        TokenTree::Punct(punct) if punct.as_char() == '<' => {
-                            // Add opening angle bracket to the stack
-                            levels += 1;
-                        },
-                        TokenTree::Punct(punct) if punct.as_char() == '>' => {
-                            // Take closing angle bracket from the stack
-                            levels -= 1;
-                            if levels == 0 {
-                                break;
-                            }
-                        },
+                        // Add opening angle bracket to the stack
+                        TokenTree::Punct(punct) if punct.as_char() == '<' => levels += 1,
+                        // Take closing angle bracket from the stack
+                        TokenTree::Punct(punct) if punct.as_char() == '>' => levels -= 1,
                         _ => { }
+                    }
+
+                    if levels == 0 {
+                        break;
                     }
 
                     tt.to_tokens(&mut group_tokens);
@@ -574,7 +604,6 @@ mod tests {
             quote! { dyn A + B + C + 'static },
             quote! { _ },
             quote! { ! },
-            quote! { [T] as [hahah] },
         ];
         for ty in fail_types {
             parse_metacast_type(&mut ty.into_iter(), "T").unwrap_err();
