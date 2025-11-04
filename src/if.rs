@@ -39,6 +39,7 @@ impl Parse for If {
             }
         }
 
+        // TODO: dont allow TailCast if else_ifs have different generic types
         if input.peek(Token![as]) {
             return Err(syn::Error::new(input.span(), "Tail MetaCast (as ...) is only available if the If statement has an 'else' branch"));
         }

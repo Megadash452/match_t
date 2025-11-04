@@ -10,7 +10,7 @@ mod r#if;
 mod r#match;
 mod meta_tokens;
 
-use r#if::If;
+use r#if ::If;
 use r#match::Match;
 use proc_macro2::TokenStream;
 use quote::ToTokens;
@@ -34,10 +34,29 @@ use syn::{
 ///
 /// The metavariable is not available within the `else` block of the *`if` statement*,
 /// or within the *default/catch-all* (`_`) arm of the *`match` statement*.
+/// 
+/// ## Metacast
+/// 
+/// Values inside the *if blocks*/*match arms* can be converted from a **concrete type** to a **generic type** and vice versa.
+/// The concrete type is represented by a *metavariable* `$T`.
+/// The value's actual type must conform to a type containing the *concrete type* or the *generic type* (depending on which type of cast you are doing).
+/// For example, if a value has type `Option<Vec<T>>`, it can only be cast to the concrete type `as Option<Vec<$T>>`.
+/// Trying to cast it to any other type will not work.
+/// 
+/// A **metacast** can also be put at the tail end of an *if*/*match statement* from convert a **concrete type** to a **generic type** for all branches or arms.
+/// However, this is only allowed if all conditions use the same *generic type* (this is only applicable in *if statement*),
+/// and if the statement has an *else block* or *default arm*.
+/// Also, a tail cast can't cast to a **concrete type** because the cconcrete type is only available within its specific *block*/*arm*.
 ///
 /// ## Limitations
 ///
-/// * The given type `T` can only be compared with **concrete types** (e.g. `i32`).
+/// * The given generic type `T` must be bound to the `'static` lifetime.
+///   Apparently this is required by [`TypeId::of()`][std::any::TypeId::of()]
+///   because types with *different lifetimes* are different types.
+///   This means that [`TypeId::of()`][std::any::TypeId::of()] would return different [`TypeId`][std::any::TypeId]s for types with lifetimes.
+///   For example, references `&'a str` and `&'b str` have different [`TypeId`][std::any::TypeId]s, even though they are technically the same type.
+///   <br><br>
+/// * The given generic type `T` can only be compared with **concrete types** (e.g. `i32`).
 ///   This macro can't check if `T` implements some trait because that is not possible in Rust (afaik).
 ///   <br><br>
 /// * To assign a **concrete type** to the metavariable `$T`,
@@ -46,39 +65,72 @@ use syn::{
 ///   With this in mind, the macro will put blocks that *don't* use `$T` to optimize code size,
 ///   but you should still try to keep each block's size as *short as possible*.
 ///
-/// ## Example
+/// ## Examples
 ///
 /// The following two examples produce identical code:
 ///
 /// With `if-else` statement:
+/// 
 /// ```
 /// # use match_t::match_t;
 /// # use std::any::Any;
 /// # use std::any::type_name;
-/// fn my_fn<T: Any>(val: T) {
+/// fn my_fn<T: Any + 'static>(val: T) -> Option<T> {
 ///     match_t! {
 ///         if T is bool | char | u8 | u32 | u64 | usize | u128 {
-///             println!("T is unsigned :( Is it 0?: ", val as $T == 0)
+///             println!("T is unsigned :( Is it 0?: {}", val as $T == 0);
+///             None
 ///         } else if T is i8 | i32 | i64 | isize | i128 {
-///             println!("T is signed! :) Absolute value of -6: {}", $T::abs(-6))
+///             println!("T is signed! :)");
+///             Some(val)
 ///         } else {
-///             println!("T is... something else: {}", type_name::<T>())
-///         }
+///             println!("T is... something else: {}", type_name::<T>());
+///             None
+///         } as Option<T>
 ///     }
 /// }
 /// ```
 ///
 /// With `match` statement:
+/// 
 /// ```
 /// # use match_t::match_t;
 /// # use std::any::Any;
 /// # use std::any::type_name;
-/// fn my_fn<T: Any>(val: T) {
+/// fn my_fn<T: Any + 'static>(val: T) -> Option<T> {
 ///     match_t! {
 ///         match T {
-///             bool | char | u8 | u32 | u64 | usize | u128 => { println!("T is unsigned :(") }
-///             i8 | i32 | i64 | isize | i128 => println!("T is signed! :) Absolute value of -6: {}", $T::abs(-6)),
-///             _ => println!("T is... something else: {}", type_name::<T>())
+///             bool | char | u8 | u32 | u64 | usize | u128 => {
+///                 println!("T is unsigned :( Is it 0?: {}", val as $T == 0);
+///                 None
+///             }
+///             i8 | i32 | i64 | isize | i128 => {
+///                 println!("T is signed! :)");
+///                 Some(val)
+///             },
+///             _ => {
+///                 println!("T is... something else: {}", type_name::<T>());
+///                 None
+///             },
+///         } as Option<T>
+///     }
+/// }
+/// ```
+/// 
+/// When using an `if` statement, each `else-if` clause can reference a different *generic type*.
+/// 
+/// ```
+/// # use match_t::match_t;
+/// # use std::any::Any;
+/// # use std::any::type_name;
+/// fn my_fn<T: Any + 'static, G: Any + 'static>() {
+///     match_t! {
+///         if T is G {
+///             println!("T and G are the same type.")
+///         } else if T is bool | char {
+///             println!("T is small :(")
+///         } else {
+///             println!("T is {}, and G is {}.", type_name::<T>(), type_name::<G>())
 ///         }
 ///     }
 /// }
@@ -264,20 +316,53 @@ mod tests {
     }
 
     #[test]
-    fn metacast() {
+    fn metacast_if_outer() {
         let if_t = syn::parse2::<If>(quote! {
             if T is bool | char {
-                println!("T Array: {}", t_array::<$T>() as [$T; 5])
-            }
+                val
+            } else {
+                panic!("Incorrect type")
+            } as [T; 5]
         }).unwrap();
-
-        println!("Debug block:\n{:#?}", if_t.block.expr);
-        println!("Output: {}", if_t.to_token_stream());
 
         assert!(compare_tokenstreams(
             if_t.to_token_stream(),
             syn::parse2::<TokenStream>(quote! {
-                
+                // Note that none of the branhces use MetaCast or MetaVar, but the TailCast still makes the conditions separate into different branches
+                if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<bool>() {
+                    let __result = { val };
+                    unsafe { ::std::mem::transmute::<[bool; 5], [T; 5]>(__result) }
+                } else if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<char>() {
+                    let __result = { val };
+                    unsafe { ::std::mem::transmute::<[char; 5], [T; 5]>(__result) }
+                } else {
+                    panic!("Incorrect type")
+                }
+            }).unwrap()
+        ))
+    }
+
+    #[test]
+    fn metacast_match_outer() {
+        let match_t = syn::parse2::<Match>(quote! {
+            match T {
+                bool | char => [val as $T; 5],
+                _ => panic!("Incorrect type")
+            } as [T; 5]
+        }).unwrap();
+
+        assert!(compare_tokenstreams(
+            match_t.to_token_stream(),
+            syn::parse2::<TokenStream>(quote! {
+                if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<bool>() {
+                    let __result = { [unsafe { ::std::mem::transmute::<T, bool>(val) }; 5] };
+                    unsafe { ::std::mem::transmute::<[bool; 5], [T; 5]>(__result) }
+                } else if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<char>() {
+                    let __result = { [unsafe { ::std::mem::transmute::<T, char>(val) }; 5] };
+                    unsafe { ::std::mem::transmute::<[char; 5], [T; 5]>(__result) }
+                } else {
+                    panic!("Incorrect type")
+                }
             }).unwrap()
         ))
     }
