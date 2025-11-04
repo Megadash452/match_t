@@ -14,10 +14,10 @@ pub struct Match {
     braces: Brace,
     arms: Vec<MatchArm>,
     default_case_arm: Option<DefaultArm>,
+    tail_cast: Option<TailCast>,
 }
 impl Match {
     /// Directly converts the [`Match`] statement to an equivalent [`If`] statement.
-    #[allow(unused)]
     fn to_if(&self) -> syn::Result<If> {
         // Exit if there are no conditions/blocks to output
         // Also can't convert it if it only one default arm
@@ -81,8 +81,8 @@ impl Match {
                             stmts: vec![syn::Stmt::Expr(default_arm.expr.clone(), None)],
                         },
                     },
-                    tail_cast: default_arm.tail_cast.clone(),
                 }),
+            tail_cast: self.tail_cast.clone(),
         })
     }
 }
@@ -105,8 +105,6 @@ impl Parse for Match {
                     expr: match_body.parse()?,
                     // Comma is optional at the last arm
                     _comma: match_body.parse()?,
-                    // Parse a potential TailCast *outside* the match braces.
-                    tail_cast: TailCast::parse_optional_with_name(input, &metavar_name)?,
                 });
 
                 // default_case must also be the LAST case
@@ -121,9 +119,8 @@ impl Parse for Match {
             arms.push(MatchArm::parse_with_name(&match_body, &metavar_name)?);
         }
 
-        if input.peek(Token![as]) {
-            return Err(syn::Error::new(input.span(), "Tail MetaCast (as ...) is only available if the Match statement has a default (_) arm."));
-        }
+        let tail_cast = TailCast::parse_optional_with_name(input, &metavar_name)?;
+
         if !input.is_empty() {
             return Err(syn::Error::new(input.span(), "Unexpected tokens: Match statement can't have any more tokens"));
         }
@@ -134,6 +131,7 @@ impl Parse for Match {
             braces,
             arms,
             default_case_arm,
+            tail_cast,
         })
     }
 }
@@ -257,6 +255,4 @@ struct DefaultArm {
     _arrow: Token![=>],
     expr: Expr,
     _comma: Option<Token![,]>,
-    // Putting this here and not in Match because this should only be parseable if the DefaultArm is present.
-    tail_cast: Option<TailCast>,
 }

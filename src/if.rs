@@ -12,6 +12,7 @@ pub struct If {
     pub block: MetaBlock,
     pub else_ifs: Vec<ElseIf>,
     pub else_stmnt: Option<Else>,
+    pub tail_cast: Option<TailCast>,
 }
 impl Parse for If {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -22,7 +23,7 @@ impl Parse for If {
         let condition = input.parse()?;
         let block = MetaBlock::parse(input, &metavar_name)?;
 
-        let mut else_ifs = Vec::new();
+        let mut else_ifs = Vec::<ElseIf>::new();
         let mut else_stmnt = None;
 
         while input.peek(Token![else]) {
@@ -31,7 +32,7 @@ impl Parse for If {
                 else_ifs.push(input.parse()?);
             } else {
                 // Encountered else
-                let new = Else::parse_with_name(input, &metavar_name)?;
+                let new = input.parse::<Else>()?;
                 match else_stmnt {
                     Some(_) => return Err(syn::Error::new(new.else_token.span, "Two 'else' statements are not allowed")),
                     None => else_stmnt = Some(new),
@@ -39,12 +40,19 @@ impl Parse for If {
             }
         }
 
-        // TODO: dont allow TailCast if else_ifs have different generic types
-        if input.peek(Token![as]) {
-            return Err(syn::Error::new(input.span(), "Tail MetaCast (as ...) is only available if the If statement has an 'else' branch"));
-        }
+        
+        let tail_cast = TailCast::parse_optional_with_name(input, &metavar_name)?;
+
         if !input.is_empty() {
             return Err(syn::Error::new(input.span(), "Unexpected tokens: If statement can't have any more tokens"));
+        }
+
+        // Don't allow TailCast if else_ifs have different generic types.
+        if tail_cast.is_some()
+        && let Some(else_if) = else_ifs.iter()
+            .find(|else_if| else_if.t.to_token_stream().to_string() != t.to_token_stream().to_string())
+        {
+            return Err(syn::Error::new(else_if.t.span(), "Can't use a tail cast if any of the conditions use a different generic type."))
         }
 
         Ok(Self {
@@ -55,18 +63,16 @@ impl Parse for If {
             block,
             else_ifs,
             else_stmnt,
+            tail_cast,
         })
     }
 }
 impl ToTokens for If {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let tail_cast = self.else_stmnt.as_ref()
-            .and_then(|els| els.tail_cast.as_ref());
-
-        append_if_statement(Either::Left(self), tail_cast, tokens);
+        append_if_statement(Either::Left(self), self.tail_cast.as_ref(), tokens);
 
         for else_if in &self.else_ifs {
-            append_if_statement(Either::Right(else_if), tail_cast, tokens);
+            append_if_statement(Either::Right(else_if), self.tail_cast.as_ref(), tokens);
         }
 
         if let Some(else_stmnt) = &self.else_stmnt {
@@ -135,15 +141,12 @@ pub struct Else {
     pub else_token: Token![else],
     pub block: Block,
     // Don't embed else-ifs here (make different type ElseIf) to avoid recursion.
-    pub tail_cast: Option<TailCast>,
 }
-impl Else {
-    /// Like [`Parse::parse()`], but requires a **metavariable name**.
-    fn parse_with_name(input: ParseStream, metavar_name: &str) -> syn::Result<Self> {
+impl Parse for Else {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Self {
             else_token: input.parse()?,
             block: input.parse()?,
-            tail_cast: TailCast::parse_optional_with_name(input, metavar_name)?,
         })
     }
 }

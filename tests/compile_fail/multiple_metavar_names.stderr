@@ -1,12 +1,5 @@
-error: Only one Metavariable name can be used within a branch. Found $G while $T exists.
-  --> tests/compile_fail/multiple_metavar_names.rs:4:5
-   |
-4  | /     match_t::match_t! {
-5  | |         if T is bool | char {
-6  | |             println!("{}", core::mem::size_of::<$T>());
-7  | |             println!("{}", core::mem::size_of::<$G>());
-...  |
-11 | |     }
-   | |_____^
-   |
-   = note: this error originates in the macro `match_t::match_t` (in Nightly builds, run with -Z macro-backtrace for more info)
+error: Only one Metavariable/Generic Type name can exist within a branch. Found $G while looking for $T
+ --> tests/compile_fail/multiple_metavar_names.rs:7:50
+  |
+7 |             println!("{}", core::mem::size_of::<$G>());
+  |                                                  ^
