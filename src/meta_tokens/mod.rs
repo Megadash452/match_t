@@ -6,16 +6,16 @@ use std::{fmt::{Debug, Display, Write as _}, rc::Rc};
 use proc_macro2::{Group, Delimiter, Ident, Punct, Spacing, Span, TokenStream, TokenTree};
 use syn::{Type, braced, parse::{Parse, ParseStream}, token::Brace};
 use stream::MetaTokenStream;
-use token::{MetaToken, MetaCastType};
+use token::{MetaToken, MetaVar, MetaCast, MetaCastType};
 
 /// Akin to an [`Expr`], a [`MetaExpr`] is an expression of rust code that contains a *type* **metavariable** that must be resolved to a *concrete type*.
 ///
 /// A [`MetaExpr`] is a modified version of a [`TokenStream`] with the ability to hold custom tokens.
-/// The custom token is a [`MetaVariable`], which is a placeholder for a **concrete type**.
+/// The custom token is a [`MetaVar`], which is a placeholder for a **concrete type**.
 /// When a [`MetaExpr`] is converted [to `TokenStream`][MetaExpr::to_tokens()],
-/// all [`MetaVariable`] placeholders are converted to the **concrete type**.
+/// all [`MetaVar`] placeholders are converted to the **concrete type**.
 /// 
-/// A [`MetaExpr`] is a series of [`TokenStream`] with [`MetaVariable`] placeholders in between.
+/// A [`MetaExpr`] is a series of [`TokenStream`] with [`MetaVar`] placeholders in between.
 /// When the **metavariables** are resolved to a *concrete type*,
 /// the tokens are concatenated together to form a single [`TokenStream`].
 ///
@@ -25,8 +25,6 @@ use token::{MetaToken, MetaCastType};
 ///
 /// The [`MetaExprInner`] is wrapped in an [`Rc`] because *deep clones* of the `TokenTree` are unnecessary work,
 /// and since [`MetaExprInner`] is *immutable*, it's best to have all clones share the same `TokenTree`.
-/// 
-/// [`MetaVariable`]: MetaToken::MetaVar
 pub struct MetaExpr(Rc<MetaExprInner>);
 impl MetaExpr {
     pub fn metavar_name(&self) -> Option<&str> {
@@ -34,12 +32,10 @@ impl MetaExpr {
     }
     
     /// Like [`Parse::parse()`], but the caller provides a **metavariable name**
-    /// so that [`MetaVariable`]s are checked when they are parsed.
-    /// This check is necessary because all [`MetaVariable`]s in the same [`MetaExpr`] must have the same **name**.
+    /// so that [`MetaVar`]s are checked when they are parsed.
+    /// This check is necessary because all [`MetaVar`]s in the same [`MetaExpr`] must have the same **name**.
     /// 
     /// This function takes *all* the tokens in the [`ParseStream`].
-    /// 
-    /// [`MetaVariable`]: MetaToken::MetaVar
     pub fn parse(input: ParseStream, metavar_name: &str) -> syn::Result<Self> {
         Self::parse_tokens(TokenStream::parse(input)?, metavar_name)
     }
@@ -52,7 +48,7 @@ impl MetaExpr {
             })))
     }
 
-    /// Like [`quote::ToTokens::to_tokens()`], but takes a [`Type`] to resovle [metavariables][MetaToken::MetaVar] to.
+    /// Like [`quote::ToTokens::to_tokens()`], but takes a [`Type`] to resovle [`MetaVar`]s to.
     pub fn to_tokens(&self, ty: &Type, tokens: &mut TokenStream) {
         self.0.tokens.to_tokens(ty, tokens)
     }

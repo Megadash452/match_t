@@ -35,7 +35,7 @@ impl MetaTokenStream {
                     group.set_span(span.join());
                     group.to_tokens(stream);
                 },
-                MetaToken::MetaCast { expr, ty: ty_tokens, t, cast_ty, .. } => {
+                MetaToken::MetaCast(MetaCast { expr, ty: ty_tokens, t, cast_ty, .. }) => {
                     let (from_ty, to_ty);
                     let generic_ty = ty_tokens.to_token_stream(&Type::Verbatim(TokenStream::from_str(t).unwrap()));
                     let resolved_ty = ty_tokens.to_token_stream(ty);
@@ -54,7 +54,7 @@ impl MetaTokenStream {
                     
                     /* SAFETY: We know that `T` is the **resolved_ty** because we checked it with TypeId.
                                So casting something like `[T]` to `[resolved_ty]` is safe. */
-                    quote! { unsafe { ::std::mem::transumte::<#from_ty, #to_ty>(#value) } }.to_tokens(stream);
+                    quote! { unsafe { ::std::mem::transmute::<#from_ty, #to_ty>(#value) } }.to_tokens(stream);
                 },
                 MetaToken::MetaVar { .. } => clear_span(ty.to_token_stream()).to_tokens(stream),
                 MetaToken::Ident(ident) => ident.to_tokens(stream),
@@ -178,9 +178,9 @@ impl IterBfsElement for &MetaToken {
     fn append_children(&self, queue: &mut VecDeque<Self>) {
         match self {
             MetaToken::Group { tokens, .. } => queue.extend(tokens.0.iter()),
-            MetaToken::MetaCast { ty, .. } => queue.extend(ty.0.iter()),
+            MetaToken::MetaCast(metacast) => queue.extend(metacast.ty.0.iter()),
             // No children
-            MetaToken::MetaVar { .. } => { },
+            MetaToken::MetaVar(_) => { },
             MetaToken::Ident(_) => { },
             MetaToken::Punct(_) => { },
             MetaToken::Lit(_) => { },

@@ -236,18 +236,31 @@ mod tests {
         ))
     }
 
-    /// Each else-if clause in the if statement can reference a different generic type.
     #[test]
-    fn if_multiple_metavars() {
-        syn::parse2::<If>(quote! {
-            if T is bool | char | u8 {
-                println!("T is small :(")
-            } else if G is i128 | u128 {
-                println!("T is BIG! :) size: {}", size_of::<$G>())
+    fn metacast() {
+        let if_t = syn::parse2::<If>(quote! {
+            if T is bool | char {
+                let array = [val as $T; 5];
+                array as [T; 5]
             } else {
-                println!("T is... something else: {}", type_name::<T>())
+                panic!("Incorrect type")
             }
         }).unwrap();
+
+        assert!(compare_tokenstreams(
+            if_t.to_token_stream(),
+            syn::parse2::<TokenStream>(quote! {
+                if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<bool>() {
+                    let array = [unsafe { ::std::mem::transmute::<T, bool>(val) }; 5];
+                    unsafe { ::std::mem::transmute::<[bool; 5], [T; 5]>(array) }
+                } else if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<char>() {
+                    let array = [unsafe { ::std::mem::transmute::<T, char>(val) }; 5];
+                    unsafe { ::std::mem::transmute::<[char; 5], [T; 5]>(array) }
+                } else {
+                    panic!("Incorrect type")
+                }
+            }).unwrap()
+        ))
     }
 
     #[test]
