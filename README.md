@@ -11,7 +11,7 @@ Specifically, you compare a *generic type* (`T`) against any *concrete type* in 
 Run `cargo add match_t` within your project's directory.
 
 Or, put this line in your project's `Cargo.toml` file (under **dependencies**:):
-`match_t = "0.2.1"`.
+`match_t = "0.2.4"`.
 
 ## Examples
 

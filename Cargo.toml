@@ -1,6 +1,6 @@
 [package]
 name = "match_t"
-version = "0.2.3"
+version = "0.2.4"
 description = "Compare generic types with concrete types in Rust."
 license = "GPL-3.0"
 repository = "https://github.com/Megadash452/match_t"
