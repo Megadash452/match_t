@@ -87,21 +87,26 @@ impl Display for Condition {
 #[derive(Clone)]
 pub struct TailCast {
     #[allow(unused)]
+    pub dollar: Token![$],
+    #[allow(unused)]
     pub as_token: Token![as],
     pub ty: MetaExpr,
 }
 impl TailCast {
     /// Like [`Parse::parse()`], but requires a **metavariable name**.
     pub fn parse_with_name(input: ParseStream, metavar_name: &str) -> syn::Result<Self> {
-        let as_token = input.fork().parse::<Token![as]>()?;
+        let fork = input.fork();
+        let dollar = fork.parse::<Token![$]>()?;
+        let as_token = fork.parse::<Token![as]>()?;
+        drop(fork);
+        
         let ty = {
             let token_iter = &mut input.parse::<TokenStream>().unwrap().into_iter();
             let cast = crate::meta_tokens::parse_metacast(
                 token_iter,
                 &mut MetaTokenStream::new(),
                 metavar_name,
-            )?
-            .ok_or(syn::Error::new(as_token.span(), "Could not parse MetaCast: input may be invalid."))?;
+            )?.unwrap();
 
             if cast.cast_ty == MetaCastType::GenericToConcrete {
                 return Err(syn::Error::new(as_token.span(), format!("A Generic To Concrete MetaCast is not allowed as a Tail Cast. Don't use metavariable '${metavar_name}'")));
@@ -112,11 +117,12 @@ impl TailCast {
 
             MetaExpr::from(cast.ty)
         };
-        Ok(Self { as_token, ty })
+
+        Ok(Self { dollar, as_token, ty })
     }
     /// Like [`Self::parse_with_name()`], but can return [`None`].
     pub fn parse_optional_with_name(input: ParseStream, metavar_name: &str) -> syn::Result<Option<Self>> {
-        Ok(if input.peek(Token![as]) {
+        Ok(if input.peek(Token![$]) && input.peek2(Token![as]) {
             Some(Self::parse_with_name(input, metavar_name)?)
         } else {
             None

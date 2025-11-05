@@ -37,10 +37,10 @@ use syn::{
 ///
 /// ## Metacast
 ///
-/// Values inside the *if blocks*/*match arms* can be converted from a **concrete type** to a **generic type** and vice versa.
+/// Values inside the *if blocks*/*match arms* can be converted from a **concrete type** to a **generic type** (and vice versa) with the `$as <Type>` syntax.
 /// The concrete type is represented by a *metavariable* `$T`.
 /// The value's actual type must conform to a type containing the *concrete type* or the *generic type* (depending on which type of cast you are doing).
-/// For example, if a value has type `Option<Vec<T>>`, it can only be cast to the concrete type `as Option<Vec<$T>>`.
+/// For example, if a value has type `Option<Vec<T>>`, it can only be cast to the concrete type `$as Option<Vec<$T>>`.
 /// Trying to cast it to any other type will not work.
 ///
 /// A **metacast** can also be put at the tail end of an *if*/*match statement* from convert a **concrete type** to a **generic type** for all branches or arms.
@@ -78,15 +78,15 @@ use syn::{
 /// fn my_fn<T: Any>(val: T) -> Option<T> {
 ///     match_t! {
 ///         if T is u8 | u32 | u64 | usize | u128 {
-///             println!("T is unsigned :( Is it 0?: {}", val as $T == 0);
+///             println!("T is unsigned :( Is it 0?: {}", val $as $T == 0);
 ///             None
 ///         } else if T is i8 | i32 | i64 | isize | i128 {
 ///             println!("T is signed! :)");
-///             Some(val as $T)
+///             Some(val $as $T)
 ///         } else {
 ///             println!("T is... something else: {}", type_name::<T>());
 ///             None
-///         } as Option<T>
+///         } $as Option<T>
 ///     }
 /// }
 /// ```
@@ -101,18 +101,18 @@ use syn::{
 ///     match_t! {
 ///         match T {
 ///             u8 | u32 | u64 | usize | u128 => {
-///                 println!("T is unsigned :( Is it 0?: {}", val as $T == 0);
+///                 println!("T is unsigned :( Is it 0?: {}", val $as $T == 0);
 ///                 None
 ///             }
 ///             i8 | i32 | i64 | isize | i128 => {
 ///                 println!("T is signed! :)");
-///                 Some(val as $T)
+///                 Some(val $as $T)
 ///             },
 ///             _ => {
 ///                 println!("T is... something else: {}", type_name::<T>());
 ///                 None
 ///             },
-///         } as Option<T>
+///         } $as Option<T>
 ///     }
 /// }
 /// ```
@@ -292,10 +292,10 @@ mod tests {
     fn metacast_if_outer() {
         let if_t = syn::parse2::<If>(quote! {
             if T is bool | char {
-                [val as $T; 5]
+                [val $as $T; 5]
             } else {
                 panic!("Incorrect type")
-            } as [T; 5]
+            } $as [T; 5]
         }).unwrap();
 
         assert!(compare_tokenstreams(
@@ -308,9 +308,9 @@ mod tests {
     fn metacast_match_outer() {
         let match_t = syn::parse2::<Match>(quote! {
             match T {
-                bool | char => [val as $T; 5],
+                bool | char => [val $as $T; 5],
                 _ => panic!("Incorrect type")
-            } as [T; 5]
+            } $as [T; 5]
         }).unwrap();
 
         assert!(compare_tokenstreams(

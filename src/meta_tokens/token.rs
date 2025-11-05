@@ -135,6 +135,8 @@ impl Debug for MetaVar {
 pub struct MetaCast {
     pub expr: MetaTokenStream,
     #[allow(unused)]
+    pub dollar: Token![$],
+    #[allow(unused)]
     pub as_token: Token![as],
     pub ty: MetaTokenStream,
     /// Name of the generic Type (e.g. `T`).
@@ -151,7 +153,7 @@ impl PartialEq for MetaCast {
 }
 impl Display for MetaCast {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} as {}", self.expr, self.ty)
+        write!(f, "{} $as {}", self.expr, self.ty)
     }
 }
 impl Debug for MetaCast {

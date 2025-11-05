@@ -1,5 +1,6 @@
 use super::*;
 use quote::ToTokens as _;
+use syn::spanned::Spanned;
 
 fn advance_by(iter: &mut impl Iterator, i: usize) {
     for _ in 0..i {
@@ -21,18 +22,17 @@ pub fn parse_as_metatokens(
     let mut fork = token_iter.clone();
     while let Some(tt) = fork.next() {
         match &tt {
-            TokenTree::Punct(punct) if punct.as_char() == '$' 
-                => if let Some(metavar) = parse_metavar(&mut token_iter, metavar_name)? {
-                    fork = token_iter.clone();
-                    tokens.push(MetaToken::MetaVar(metavar));
-                    continue;
-                },
-            TokenTree::Ident(ident) if ident == "as"
-                => if let Some(metacast) = parse_metacast(&mut token_iter, &mut tokens, metavar_name)? {
+            TokenTree::Punct(punct) if punct.as_char() == '$' => {
+                if let Some(metacast) = parse_metacast(&mut token_iter, &mut tokens, metavar_name)? {
                     fork = token_iter.clone();
                     tokens.push(MetaToken::MetaCast(metacast));
                     continue;
-                },
+                } else if let Some(metavar) = parse_metavar(&mut token_iter, metavar_name)? {
+                    fork = token_iter.clone();
+                    tokens.push(MetaToken::MetaVar(metavar));
+                    continue;
+                }
+            },
             _ => { },
         }
         token_iter = fork.clone();
@@ -50,6 +50,8 @@ pub fn parse_as_metatokens(
 }
 
 /// Parses expression `$T`, only advancing the tokens if **successfully parsed**.
+///
+/// Returns [`None`] if the initial tokens is not `$as`.
 fn parse_metavar(
     token_iter: &mut (impl Iterator<Item = TokenTree> + Clone),
     metavar_name: &str,
@@ -61,6 +63,10 @@ fn parse_metavar(
     && punct.as_char() == '$'
     // If Ident was not found, don't return error, just ignore these tokens.
     && let Some(TokenTree::Ident(ident)) = fork.next() {
+        if ident == "as" {
+            return Err(syn::Error::new(ident.span(), format!("Did not expect MetaCast when parsing MetaVariable '${metavar_name}'.")))
+        }
+
         if ident != metavar_name {
             return Err(syn::Error::new(
                 ident.span(),
@@ -81,6 +87,7 @@ fn parse_metavar(
     }
 }
 
+/// Returns [`None`] if the initial tokens are not `$as`.
 pub fn parse_metacast(
     token_iter: &mut (impl Iterator<Item = TokenTree> + Clone),
     prev_tokens: &mut MetaTokenStream,
@@ -88,7 +95,9 @@ pub fn parse_metacast(
 ) -> syn::Result<Option<MetaCast>> {
     let mut fork = token_iter.clone();
 
-    if let Some(TokenTree::Ident(ident)) = fork.next()
+    if let Some(TokenTree::Punct(dollar)) = fork.next()
+    && dollar.as_char() == '$'
+    && let Some(TokenTree::Ident(ident)) = fork.next()
     && ident == "as" {
         let (ty, cast_ty) = if let Ok(ty) = syn::parse2::<Type>(fork.clone().collect()) {
             // Cast Type turns out to be a Rust type with the generic.
@@ -96,10 +105,9 @@ pub fn parse_metacast(
             let ty_tokens = ty.to_token_stream();
             // Parse the syn::Type as MetaTokens, replacing all instances of the generic `T` with the metavariable `$T`.
             let (ty, found_generic_t) = type_to_metatokens(ty_tokens.clone(), metavar_name);
-            // If a generic with metavar_name was not found in the tokens, assume the cast is a normal cast.
             if !found_generic_t {
-                // Ignore anything that was parsed, just add the 'as' token and move on.
-                return Ok(None);
+                // A generic with metavar_name was not found in the tokens
+                return Err(syn::Error::new(ty_tokens.span(), format!("Expected to find generic type '{metavar_name}' within the Type.")));
             }
 
             // Advance tokens to the length of the parsed tokens
@@ -119,6 +127,7 @@ pub fn parse_metacast(
 
         Ok(Some(MetaCast {
             expr: parse_metacast_value(prev_tokens),
+            dollar: syn::token::Dollar { spans: [dollar.span()] },
             as_token: syn::token::As { span: ident.span() },
             ty,
             t: metavar_name.to_string(),
@@ -331,11 +340,11 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(
                         _ => { }
                     }
 
+                    tt.to_tokens(&mut group_tokens);
+
                     if levels == 0 {
                         break;
                     }
-
-                    tt.to_tokens(&mut group_tokens);
                 }
 
                 // Parse the collected tokens
@@ -548,6 +557,7 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(
                 '$' => parse_metavar(token_iter, metavar_name)?
                     .map(|metavar| MetaTokenStream::from(vec![MetaToken::MetaVar(metavar)]))
                     .ok_or(syn::Error::new(punct.span(), "Unexpected tokens: Found '$', but was not a metavariable.")),
+                '<' => parse_angle_bracket_group(token_iter, metavar_name),
                 '&' if punct.spacing() == Spacing::Alone => {
                     let mut tokens = MetaTokenStream::new();
                     tokens.push(MetaToken::Punct(punct));
@@ -645,7 +655,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_metatype_test() {
+    fn parse_metacast_type_test() {
         // I HAD to make unit tests for this garbage 🤭
         let types = [
             quote! { $T },
@@ -666,6 +676,9 @@ mod tests {
             quote! { *const T },
             quote! { *const::std::any::MyType },
             quote! { *mut ::std::any::MyType },
+            quote! { <T> },
+            quote! { <$T> },
+            quote! { <::std::any::MyType> },
         ];
         for ty in types {
             parse_metacast_type(&mut ty.into_iter(), "T").unwrap();

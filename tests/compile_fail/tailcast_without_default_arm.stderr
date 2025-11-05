@@ -4,8 +4,8 @@ error[E0317]: `if` may be missing an `else` clause
 4 |        let arr = match_t::match_t! {
   |  ________________-
 5 | |/         if T is bool | char {
-6 | ||             [val as $T; 5]
-7 | ||         } as [T; 5]
+6 | ||             [val $as $T; 5]
+7 | ||         } $as [T; 5]
   | ||_________^ expected `[T; 5]`, found `()`
 8 | |      };
   | |______- found here

@@ -29,15 +29,15 @@ fn metacast() {
     fn my_fn<T: Any>(val: T) -> Option<T> {
         match_t! {
             if T is u8 | u32 | u64 | usize | u128 {
-                println!("T is unsigned :( Is it 0?: {}", val as $T == 0);
+                println!("T is unsigned :( Is it 0?: {}", val $as $T == 0);
                 None
             } else if T is i8 | i32 | i64 | isize | i128 {
                 println!("T is signed! :)");
-                Some(val as $T)
+                Some(val $as $T)
             } else {
                 println!("T is... something else: {}", type_name::<T>());
                 None
-            } as Option<T>
+            } $as Option<T>
         }
     }
     assert_eq!(my_fn::<u8>(0), None);
