@@ -210,6 +210,8 @@ impl MatchArm {
                 while let Some((tt, next)) = cursor.token_tree() {
                     cursor = next;
 
+                    // FIXME: skip angle bracket groups
+
                     if let TokenTree::Punct(punct) = &tt
                     && punct.as_char() == ',' {
                         // Convert punct to Token

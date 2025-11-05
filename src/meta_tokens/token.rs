@@ -1,7 +1,7 @@
 use super::*;
 use proc_macro2::{Literal, extra::DelimSpan};
-use quote::ToTokens;
-use syn::Token;
+use quote::{ToTokens, quote_spanned};
+use syn::{Token, spanned::Spanned};
 
 /// A [`TokenTree`] that can hold a [`Metavar`].
 pub enum MetaToken {
@@ -27,6 +27,26 @@ impl MetaToken {
             span: group.delim_span(),
             tokens: parser(group.stream())?,
         })
+    }
+
+    /// Same as [`span()`][syn::spanned::Spanned::span()].
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Group { span, .. } => span.span(),
+            Self::MetaVar(MetaVar { dollar, t }) => quote_spanned! {dollar.span()=> #dollar #t }.span(),
+            Self::MetaCast(MetaCast { expr, dollar, as_token, ty, ..}) => {
+                let first_token = expr.get(0).map(|token| Ident::new("", token.span()));
+                let last_token = if ty.len() > 0 {
+                    Some(Ident::new("", ty[ty.len() - 1].span()))
+                } else {
+                    None
+                };
+                quote_spanned! {dollar.span()=> #first_token #dollar #as_token #last_token }.span()
+            },
+            Self::Ident(ident) => ident.span(),
+            Self::Punct(punct) => punct.span(),
+            Self::Lit(lit) => lit.span(),
+        }
     }
 }
 /// Equality means that the tokens have the same data, but not necessarily the same [`Span`].
