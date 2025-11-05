@@ -82,7 +82,7 @@ impl Display for Condition {
 
 /// Like [`MetaCast`][crate::meta_tokens::token::MetaCast], converting an **expression** to some *MetaType*,
 /// but only allows converting [from **concrete type** to **generic type**][crate::meta_tokens::token::MetaCastType::ConcreteToGeneric].
-/// 
+///
 /// The **expression** is the [`If`] or [`Match`] that contains this [`TailCast`].
 #[derive(Clone)]
 pub struct TailCast {
@@ -96,8 +96,12 @@ impl TailCast {
         let as_token = input.fork().parse::<Token![as]>()?;
         let ty = {
             let token_iter = &mut input.parse::<TokenStream>().unwrap().into_iter();
-            let cast = crate::meta_tokens::parse_metacast(token_iter, &mut MetaTokenStream::new(), metavar_name)?
-                .ok_or(syn::Error::new(as_token.span(), "Could not parse MetaCast: input may be invalid."))?;
+            let cast = crate::meta_tokens::parse_metacast(
+                token_iter,
+                &mut MetaTokenStream::new(),
+                metavar_name,
+            )?
+            .ok_or(syn::Error::new(as_token.span(), "Could not parse MetaCast: input may be invalid."))?;
 
             if cast.cast_ty == MetaCastType::GenericToConcrete {
                 return Err(syn::Error::new(as_token.span(), format!("A Generic To Concrete MetaCast is not allowed as a Tail Cast. Don't use metavariable '${metavar_name}'")));

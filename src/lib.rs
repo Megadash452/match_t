@@ -10,7 +10,7 @@ mod r#if;
 mod r#match;
 mod meta_tokens;
 
-use r#if ::If;
+use r#if::If;
 use r#match::Match;
 use proc_macro2::TokenStream;
 use quote::ToTokens;
@@ -34,15 +34,15 @@ use syn::{
 ///
 /// The metavariable is not available within the `else` block of the *`if` statement*,
 /// or within the *default/catch-all* (`_`) arm of the *`match` statement*.
-/// 
+///
 /// ## Metacast
-/// 
+///
 /// Values inside the *if blocks*/*match arms* can be converted from a **concrete type** to a **generic type** and vice versa.
 /// The concrete type is represented by a *metavariable* `$T`.
 /// The value's actual type must conform to a type containing the *concrete type* or the *generic type* (depending on which type of cast you are doing).
 /// For example, if a value has type `Option<Vec<T>>`, it can only be cast to the concrete type `as Option<Vec<$T>>`.
 /// Trying to cast it to any other type will not work.
-/// 
+///
 /// A **metacast** can also be put at the tail end of an *if*/*match statement* from convert a **concrete type** to a **generic type** for all branches or arms.
 /// However, this is only allowed if all conditions use the same *generic type* (this is only applicable in *if statement*),
 /// and if the statement has an *else block* or *default arm*.
@@ -70,7 +70,7 @@ use syn::{
 /// The following two examples produce identical code:
 ///
 /// With `if-else` statement:
-/// 
+///
 /// ```
 /// # use match_t::match_t;
 /// # use std::any::Any;
@@ -92,7 +92,7 @@ use syn::{
 /// ```
 ///
 /// With `match` statement:
-/// 
+///
 /// ```
 /// # use match_t::match_t;
 /// # use std::any::Any;
@@ -116,9 +116,9 @@ use syn::{
 ///     }
 /// }
 /// ```
-/// 
+///
 /// When using an `if` statement, each `else-if` clause can reference a different *generic type*.
-/// 
+///
 /// ```
 /// # use match_t::match_t;
 /// # use std::any::Any;

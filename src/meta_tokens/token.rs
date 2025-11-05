@@ -18,7 +18,10 @@ pub enum MetaToken {
 }
 impl MetaToken {
     /// Converts a [`TokenTree::Group`] to a [`MetaToken::Group`] by parsing the [`Group`]'s inner [`TokenStream`] with a given **parser**.
-    pub fn from_group(group: Group, parser: impl FnOnce(TokenStream) -> syn::Result<MetaTokenStream>) -> syn::Result<Self> {
+    pub fn from_group(
+        group: Group,
+        parser: impl FnOnce(TokenStream) -> syn::Result<MetaTokenStream>,
+    ) -> syn::Result<Self> {
         Ok(Self::Group {
             delim: group.delimiter(),
             span: group.delim_span(),
@@ -39,11 +42,17 @@ impl PartialEq for MetaToken {
                 tokens: other_tokens,
                 ..
             }) => self_delim == other_delim && self_tokens == other_tokens,
-            (Self::MetaVar(self_metavar), Self::MetaVar(other_metavar)) => self_metavar == other_metavar,
-            (Self::MetaCast(self_metacast), Self::MetaCast(other_metacast)) => self_metacast == other_metacast,
-            (Self::Ident(self_ident), Self::Ident(other_ident)) => self_ident.to_string() == other_ident.to_string(),
-            (Self::Punct(self_punct), Self::Punct(other_punct)) => self_punct.as_char() == other_punct.as_char() && self_punct.spacing() == other_punct.spacing(),
-            (Self::Lit(self_lit), Self::Lit(other_lit)) => self_lit.to_token_stream().to_string() == other_lit.to_token_stream().to_string(),
+            (Self::MetaVar(self_metavar), Self::MetaVar(other_metavar))
+                => self_metavar == other_metavar,
+            (Self::MetaCast(self_metacast), Self::MetaCast(other_metacast))
+                => self_metacast == other_metacast,
+            (Self::Ident(self_ident), Self::Ident(other_ident))
+                => self_ident == other_ident,
+            (Self::Punct(self_punct), Self::Punct(other_punct))
+                => self_punct.as_char() == other_punct.as_char()
+                && self_punct.spacing() == other_punct.spacing(),
+            (Self::Lit(self_lit), Self::Lit(other_lit))
+                => self_lit.to_token_stream().to_string() == other_lit.to_token_stream().to_string(),
             _ => false,
         }
     }
@@ -119,7 +128,7 @@ impl Debug for MetaVar {
 ///    This cast converts a *value* with a **generic type** `T` to the **concrete type**.
 ///  * A cast that contains a **generic type** (`T`).
 ///    This cast converts a *value* with a **concrete type** to the **generic type**.
-/// 
+///
 /// While both *types of cast* are mutually exclusive (a Type with *metavariables* can't contain *generics* in the input),
 /// the `T` in both are represented by a [`MetaVar`].
 /// This is done so that there is a placeholder to replace with any type that is needed in the cast.

@@ -5,8 +5,8 @@ use crate::{
     meta_tokens::{MetaBlock, MetaExpr},
 };
 use proc_macro2::{Span, TokenTree};
-use quote::{quote_spanned, TokenStreamExt as _};
-use syn::{Expr, Token, Type, braced, token::Brace, spanned::Spanned as _};
+use quote::{TokenStreamExt as _, quote_spanned};
+use syn::{Expr, Token, Type, braced, spanned::Spanned as _, token::Brace};
 
 pub struct Match {
     match_token: Token![match],
@@ -72,9 +72,7 @@ impl Match {
                         // Expr (with braces) is already a block, don't need to wrap it in another block
                         Expr::Block(block)
                         if block.label.is_none()
-                        && block.attrs.is_empty() => {
-                            block.block.clone()
-                        }
+                        && block.attrs.is_empty() => block.block.clone(),
                         // Wrap Expr (no braces) in a block
                         _ => syn::Block {
                             brace_token: self.braces,

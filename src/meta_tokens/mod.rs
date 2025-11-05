@@ -2,12 +2,20 @@ mod parse;
 pub mod stream;
 pub mod token;
 
-use std::{fmt::{Debug, Display, Write as _}, ops::Deref, rc::Rc};
-use proc_macro2::{Group, Delimiter, Ident, Punct, Spacing, Span, TokenStream, TokenTree};
-use syn::{Type, braced, parse::{Parse, ParseStream}, token::Brace};
-use stream::MetaTokenStream;
-use token::{MetaToken, MetaVar, MetaCast, MetaCastType};
 pub use parse::parse_metacast;
+use proc_macro2::{Delimiter, Group, Ident, Punct, Spacing, Span, TokenStream, TokenTree};
+use std::{
+    fmt::{Debug, Display, Write as _},
+    ops::Deref,
+    rc::Rc,
+};
+use stream::MetaTokenStream;
+use syn::{
+    Type, braced,
+    parse::{Parse, ParseStream},
+    token::Brace,
+};
+use token::{MetaCast, MetaCastType, MetaToken, MetaVar};
 
 /// Akin to an [`Expr`][syn::Expr], a [`MetaExpr`] is an expression of rust code that contains a *type* **metavariable** that must be resolved to a *concrete type*.
 ///
@@ -27,15 +35,14 @@ impl MetaExpr {
     /// Like [`Parse::parse()`], but the caller provides a **metavariable name**
     /// so that [`MetaVar`]s are checked when they are parsed.
     /// This check is necessary because all [`MetaVar`]s in the same [`MetaExpr`] must have the same **name**.
-    /// 
+    ///
     /// This function takes *all* the tokens in the [`ParseStream`].
     pub fn parse(input: ParseStream, metavar_name: &str) -> syn::Result<Self> {
         Self::parse_tokens(TokenStream::parse(input)?, metavar_name)
     }
     /// Same as [`Self::parse()`], but takes a [`TokenStream`] instead.
     pub fn parse_tokens(tokens: TokenStream, metavar_name: &str) -> syn::Result<Self> {
-        parse::parse_as_metatokens(tokens, metavar_name)
-            .map(|tokens| Self(Rc::new(tokens)))
+        parse::parse_as_metatokens(tokens, metavar_name).map(|tokens| Self(Rc::new(tokens)))
     }
 }
 impl Clone for MetaExpr {

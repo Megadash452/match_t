@@ -1,5 +1,8 @@
 use super::*;
-use crate::{common::{Condition, TailCast}, meta_tokens::{MetaBlock, stream::metacast_to_token_stream, token::MetaCastType}};
+use crate::{
+    common::{Condition, TailCast},
+    meta_tokens::{MetaBlock, stream::metacast_to_token_stream, token::MetaCastType},
+};
 use either::Either;
 use quote::{quote, quote_spanned};
 use syn::{Block, Ident, Token, Type, spanned::Spanned as _};
@@ -40,7 +43,6 @@ impl Parse for If {
             }
         }
 
-        
         let tail_cast = TailCast::parse_optional_with_name(input, &metavar_name)?;
 
         // Don't allow TailCast if else_ifs have different generic types.
@@ -121,7 +123,14 @@ impl Parse for ElseIf {
         let condition = input.parse()?;
         let block = MetaBlock::parse(input, &metavar_name)?;
 
-        Ok(Self { else_token, if_token, t, is_token, condition, block })
+        Ok(Self {
+            else_token,
+            if_token,
+            t,
+            is_token,
+            condition,
+            block,
+        })
     }
 }
 impl Debug for ElseIf {
@@ -161,9 +170,13 @@ impl Parse for IsToken {
 }
 
 /// Appends Rust tokens of a single [`If`] or [`ElseIf`] statement.
-/// 
+///
 /// That is, this function outputs the `else if`, condition, and block.
-fn append_if_statement(if_or_elseif: Either<&If, &ElseIf>, tail_cast: Option<&TailCast>, tokens: &mut TokenStream) {
+fn append_if_statement(
+    if_or_elseif: Either<&If, &ElseIf>,
+    tail_cast: Option<&TailCast>,
+    tokens: &mut TokenStream,
+) {
     let (if_token, else_token, generic_t, is_token, condition, block);
     match if_or_elseif {
         Either::Right(els) => {
@@ -215,7 +228,13 @@ fn append_if_statement(if_or_elseif: Either<&If, &ElseIf>, tail_cast: Option<&Ta
                 // If macro input contains an outer/tail cast, the transmute is done in every branch
                 Some(tail_cast) => {
                     let expr = block.expr.to_token_stream(cond_ty);
-                    let cast = metacast_to_token_stream(quote_spanned!(expr.span()=> __result), &tail_cast.ty, cond_ty, generic_t, MetaCastType::ConcreteToGeneric);
+                    let cast = metacast_to_token_stream(
+                        quote_spanned!(expr.span()=> __result),
+                        &tail_cast.ty,
+                        cond_ty,
+                        generic_t,
+                        MetaCastType::ConcreteToGeneric
+                    );
                     quote! {
                         // Put block in a separate local variable to prevent the entire block from being in an unsafe block
                         let __result = { #expr };
@@ -231,7 +250,9 @@ fn append_if_statement(if_or_elseif: Either<&If, &ElseIf>, tail_cast: Option<&Ta
         condition.to_tokens(generic_t, is_token.0.span(), tokens);
         block.braces.surround(tokens, |tokens| {
             // Provide a fake Type since there are no metavariables to resolve
-            block.expr.to_tokens(&Type::Verbatim(TokenStream::new()), tokens);
+            block
+                .expr
+                .to_tokens(&Type::Verbatim(TokenStream::new()), tokens);
         });
     }
 }

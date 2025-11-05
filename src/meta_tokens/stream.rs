@@ -1,7 +1,12 @@
 use super::*;
 use proc_macro2::Group;
-use quote::{quote, ToTokens as _};
-use std::{collections::VecDeque, iter::FusedIterator, ops::{Deref, DerefMut}, str::FromStr as _};
+use quote::{ToTokens as _, quote};
+use std::{
+    collections::VecDeque,
+    iter::FusedIterator,
+    ops::{Deref, DerefMut},
+    str::FromStr as _,
+};
 
 pub struct MetaTokenStream(Vec<MetaToken>);
 impl MetaTokenStream {
@@ -13,8 +18,7 @@ impl MetaTokenStream {
         self.iter_bfs()
             // Also include MetaCast because they will always contain metavariables.
             // It should still hit even if we don't include MetaCast, but it's just to make the search a bit faster.
-            .find(|&token| matches!(token, MetaToken::MetaVar(_) | MetaToken::MetaCast(_)))
-            .is_some()
+            .any(|token| matches!(token, MetaToken::MetaVar(_) | MetaToken::MetaCast(_)))
     }
 
     /// Converts the [`MetaTokenStream`] back to a normal Rust [`TokenStream`].
@@ -133,7 +137,13 @@ pub fn clear_span(stream: TokenStream) -> TokenStream {
     tokens
 }
 
-pub fn metacast_to_token_stream(value: TokenStream, cast_ty_tokens: &MetaTokenStream, resolved_ty: &Type, generic_t: &Type, cast_ty: MetaCastType) -> TokenStream {
+pub fn metacast_to_token_stream(
+    value: TokenStream,
+    cast_ty_tokens: &MetaTokenStream,
+    resolved_ty: &Type,
+    generic_t: &Type,
+    cast_ty: MetaCastType,
+) -> TokenStream {
     let (from_ty, to_ty);
     let generic_ty = cast_ty_tokens.to_token_stream(generic_t);
     let resolved_ty = cast_ty_tokens.to_token_stream(resolved_ty);
@@ -149,7 +159,7 @@ pub fn metacast_to_token_stream(value: TokenStream, cast_ty_tokens: &MetaTokenSt
     }
 
     /* SAFETY: We know that `T` is the **resolved_ty** because we checked it with TypeId.
-                So casting something like `[T]` to `[resolved_ty]` is safe. */
+       So casting something like `[T]` to `[resolved_ty]` is safe. */
     // Taken from https://github.com/funnsam/stable-intrinsics/blob/586a139ccb758488f109daf5165ecef574723b3e/src/lib.rs#L170
     quote! { {
         let __value = (#value);
@@ -162,7 +172,7 @@ pub fn metacast_to_token_stream(value: TokenStream, cast_ty_tokens: &MetaTokenSt
 }
 
 /// An iterator implementing the **Breadth First Search** algorithm.
-/// 
+///
 /// The iterator can be over [`MetaToken`] or [`TokenTree`].
 pub struct TokensIterBfs<T: IterBfsElement> {
     /* Apparently a Vec would perform better than a LinkedList in this case.
@@ -197,7 +207,7 @@ impl<T: IterBfsElement> Iterator for TokensIterBfs<T> {
         popped
     }
 }
-impl<T: IterBfsElement> FusedIterator for TokensIterBfs<T> { }
+impl<T: IterBfsElement> FusedIterator for TokensIterBfs<T> {}
 pub trait IterBfsElement: Sized {
     fn append_children(&self, queue: &mut VecDeque<Self>);
 }
@@ -211,21 +221,21 @@ impl IterBfsElement for &MetaToken {
                 queue.extend(metacast.ty.0.iter());
             },
             // No children
-            MetaToken::MetaVar(_) => { },
-            MetaToken::Ident(_) => { },
-            MetaToken::Punct(_) => { },
-            MetaToken::Lit(_) => { },
+            MetaToken::MetaVar(_)
+            | MetaToken::Ident(_)
+            | MetaToken::Punct(_)
+            | MetaToken::Lit(_) => {}
         }
     }
 }
 impl IterBfsElement for TokenTree {
     fn append_children(&self, queue: &mut VecDeque<Self>) {
         match self {
-            TokenTree::Group(group) => queue.extend(group.stream().into_iter()),
+            TokenTree::Group(group) => queue.extend(group.stream()),
             // No children
-            TokenTree::Ident(_) => { },
-            TokenTree::Punct(_) => { },
-            TokenTree::Literal(_) => { },
+            TokenTree::Ident(_)
+            | TokenTree::Punct(_)
+            | TokenTree::Literal(_) => {}
         }
     }
 }
@@ -245,7 +255,7 @@ impl<'a> ToIterBfs<'a, Self> for &'a MetaToken {
 }
 impl ToIterBfs<'_, TokenTree> for TokenStream {
     fn iter_bfs(&self) -> TokensIterBfs<TokenTree> {
-        TokensIterBfs::new_multi(self.clone().into_iter())
+        TokensIterBfs::new_multi(self.clone())
     }
 }
 impl ToIterBfs<'_, TokenTree> for TokenTree {
