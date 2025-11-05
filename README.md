@@ -71,9 +71,9 @@ For example:
 fn my_fn<T: Any>(val: T) -> Option<T> {
     match_t! {
         match T {
-            u8 | i8 | u32 |i32 => Some(val as $T),
+            u8 | i8 | u32 |i32 => Some(val $as $T),
             _ => None
-        } as Option<T>
+        } $as Option<T>
     }
 }
 ```
