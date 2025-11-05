@@ -43,10 +43,6 @@ impl Parse for If {
         
         let tail_cast = TailCast::parse_optional_with_name(input, &metavar_name)?;
 
-        if !input.is_empty() {
-            return Err(syn::Error::new(input.span(), "Unexpected tokens: If statement can't have any more tokens"));
-        }
-
         // Don't allow TailCast if else_ifs have different generic types.
         if tail_cast.is_some()
         && let Some(else_if) = else_ifs.iter()

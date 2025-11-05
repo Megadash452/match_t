@@ -77,7 +77,7 @@ fn parse_metavar(token_iter: &mut (impl Iterator<Item = TokenTree> + Clone), met
     }
 }
 
-fn parse_metacast(token_iter: &mut (impl Iterator<Item = TokenTree> + Clone), prev_tokens: &mut MetaTokenStream, metavar_name: &str) -> syn::Result<Option<MetaCast>> {
+pub fn parse_metacast(token_iter: &mut (impl Iterator<Item = TokenTree> + Clone), prev_tokens: &mut MetaTokenStream, metavar_name: &str) -> syn::Result<Option<MetaCast>> {
     let mut fork = token_iter.clone();
 
     if let Some(TokenTree::Ident(ident)) = fork.next()
@@ -160,7 +160,6 @@ fn parse_metacast_value(tokens: &mut MetaTokenStream) -> MetaTokenStream {
                 '=' if is_alone(punct, &tokens) => break,
                 '|' if is_alone(punct, &tokens) => break,
                 '>' if is_alone(punct, &tokens) && tokens.len() > 1 => {
-                    // TODO: parse angle bracket group backwards
                     let mut i = tokens.len() - 2;
                     let mut levels = 1u32;
 
@@ -222,16 +221,14 @@ fn parse_metacast_value(tokens: &mut MetaTokenStream) -> MetaTokenStream {
 /// 
 /// Returns the [`MetaTokenStream`] and whether an instance of the *generic type* `T` was found,
 /// and thus whether the [`MetaTokenStream`] containes any [`MetaVar`]s.
-
-// FIXME: this will convert a `T` component of a path like `std::something::T` to a metavariable `std::something::$T`. This is wrong.
-pub fn type_to_metatokens(ty: TokenStream, metavar_name: &str) -> (MetaTokenStream, bool) {
+fn type_to_metatokens(ty: TokenStream, metavar_name: &str) -> (MetaTokenStream, bool) {
     let mut tokens = MetaTokenStream::new();
     let mut token_iter = ty.to_token_stream().into_iter();
     let mut found_generic_t = false;
 
     while let Some(tt) = token_iter.next() {
-        tokens.push(match tt {
-            TokenTree::Group(group) => MetaToken::Group {
+        match tt {
+            TokenTree::Group(group) => tokens.push(MetaToken::Group {
                 delim: group.delimiter(),
                 span: group.delim_span(),
                 tokens: {
@@ -241,9 +238,28 @@ pub fn type_to_metatokens(ty: TokenStream, metavar_name: &str) -> (MetaTokenStre
                     }
                     tokens
                 },
-            },
+            }),
             TokenTree::Ident(ident) => {
-                if ident == metavar_name {
+                // The Ident is in a TypePath if it has module separators.
+                // If it is, it is not the generic type.
+                let is_in_path = {
+                    let mut fork = token_iter.clone();
+
+                    if tokens.len() >= 2
+                    && let Some(MetaToken::Punct(prev)) = tokens.last()
+                    && let Some(MetaToken::Punct(prev2)) = tokens.get(tokens.len() - 2)
+                    && prev.as_char() == ':' && prev2.as_char() == ':' && prev2.spacing() == Spacing::Joint {
+                        true
+                    } else if let Some(TokenTree::Punct(next)) = fork.next()
+                    && let Some(TokenTree::Punct(next2)) = fork.next()
+                    && next.as_char() == ':' && next.spacing() == Spacing::Joint && next2.as_char() == ':' {
+                        true
+                    } else {
+                        false
+                    }
+                };
+
+                tokens.push(if ident == metavar_name && !is_in_path {
                     found_generic_t = true;
                     MetaToken::MetaVar(MetaVar {
                         dollar: syn::token::Dollar { spans: [ident.span()] },
@@ -251,11 +267,11 @@ pub fn type_to_metatokens(ty: TokenStream, metavar_name: &str) -> (MetaTokenStre
                     })
                 } else {
                     MetaToken::Ident(ident)
-                }
+                })
             },
-            TokenTree::Punct(punct) => MetaToken::Punct(punct),
-            TokenTree::Literal(lit) => MetaToken::Lit(lit),
-        })
+            TokenTree::Punct(punct) => tokens.push(MetaToken::Punct(punct)),
+            TokenTree::Literal(lit) => tokens.push(MetaToken::Lit(lit)),
+        }
     }
 
     (tokens, found_generic_t)
@@ -265,10 +281,11 @@ pub fn type_to_metatokens(ty: TokenStream, metavar_name: &str) -> (MetaTokenStre
 /// 
 /// This basically tries to emulate the behavior of [`syn::Type`]'s [`parse()`][syn::Type::parse()] to guess where it should stop parsing.
 /// 
-/// Returns [`Err`] if the parsed tokens are not a [`MetaCastType`].
-/// That is, the tokens don't contain a [`MetaVar`].
-
-// FIXME: this will convert a `T` component of a path like `std::something::T` to a metavariable `std::something::$T`. This is wrong.
+/// This function will convert [`TokenTree`] to [`MetaToken`] as is (except for [`MetaVar`], that will be parsed).
+/// This is to say that this function WILL NOT look for instances of the **generic type** `T` with *metavar_name*.
+/// For this behavior, use [`type_to_metatokens()`].
+/// 
+/// Returns [`Err`] if the parsed tokens could not be parsed into a [`Type`] with [`MetaVar`]s.
 fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I, metavar_name: &str) -> syn::Result<MetaTokenStream> {
     // ZAMNNN this really is some spaghetti code. Could it be worse than yanderedev?
     fn parse_angle_bracket_group<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I, metavar_name: &str) -> syn::Result<MetaTokenStream> {
@@ -569,6 +586,34 @@ fn parse_metacast_type<I: Iterator<Item = TokenTree> + Clone>(token_iter: &mut I
 mod tests {
     use super::*;
     use quote::quote;
+
+    #[test]
+    fn type_to_metatokens_test() {
+        let mut ty;
+        let mut tokens;
+
+        ty = quote! { T };
+        tokens = type_to_metatokens(ty, "T");
+        assert!(tokens.1);
+        assert!(matches!(&tokens.0[0], MetaToken::MetaVar(_)));
+
+        ty = quote! { ::std::my::Type<SomeType> };
+        tokens = type_to_metatokens(ty, "T");
+        assert!(!tokens.1);
+
+        ty = quote! { ::std::my::Type<T> };
+        tokens = type_to_metatokens(ty, "T");
+        assert!(tokens.1);
+        assert!(matches!(&tokens.0[10], MetaToken::MetaVar(_)));
+
+        ty = quote! { ::std::my::T };
+        tokens = type_to_metatokens(ty, "T");
+        assert!(!tokens.1);
+
+        ty = quote! { T::AssocType };
+        tokens = type_to_metatokens(ty, "T");
+        assert!(!tokens.1);
+    }
 
     #[test]
     fn parse_metatype_test() {

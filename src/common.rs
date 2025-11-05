@@ -1,5 +1,5 @@
 use super::*;
-use crate::meta_tokens::MetaExpr;
+use crate::meta_tokens::{MetaExpr, stream::MetaTokenStream, token::MetaCastType};
 use proc_macro2::{Punct, Span};
 use quote::{TokenStreamExt as _, quote, quote_spanned};
 use syn::{Token, Type, punctuated::Punctuated, spanned::Spanned as _};
@@ -93,18 +93,22 @@ pub struct TailCast {
 impl TailCast {
     /// Like [`Parse::parse()`], but requires a **metavariable name**.
     pub fn parse_with_name(input: ParseStream, metavar_name: &str) -> syn::Result<Self> {
-        Ok(Self {
-            as_token: input.parse()?,
-            ty: {
-                let ty = input.parse::<Type>()?;
-                // FIXME: Actually, parse full MetaCast, but throw error on MetaVar or GenericToConcrete.
-                let (ty_tokens, found) = crate::meta_tokens::type_to_metatokens(ty.to_token_stream(), metavar_name);
-                if !found {
-                    return Err(syn::Error::new(ty.span(), format!("Expected type to contain generic type '{metavar_name}'.")));
-                }
-                MetaExpr::from(ty_tokens)
+        let as_token = input.fork().parse::<Token![as]>()?;
+        let ty = {
+            let token_iter = &mut input.parse::<TokenStream>().unwrap().into_iter();
+            let cast = crate::meta_tokens::parse_metacast(token_iter, &mut MetaTokenStream::new(), metavar_name)?
+                .ok_or(syn::Error::new(as_token.span(), "Could not parse MetaCast: input may be invalid."))?;
+
+            if cast.cast_ty == MetaCastType::GenericToConcrete {
+                return Err(syn::Error::new(as_token.span(), format!("A Generic To Concrete MetaCast is not allowed as a Tail Cast. Don't use metavariable '${metavar_name}'")));
             }
-        })
+            if let Some(tt) = token_iter.next() {
+                return Err(syn::Error::new(tt.span(), "Unexpected tokens: If/Match statement can't have any more tokens"));
+            }
+
+            MetaExpr::from(cast.ty)
+        };
+        Ok(Self { as_token, ty })
     }
     /// Like [`Self::parse_with_name()`], but can return [`None`].
     pub fn parse_optional_with_name(input: ParseStream, metavar_name: &str) -> syn::Result<Option<Self>> {

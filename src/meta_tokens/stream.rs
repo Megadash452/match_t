@@ -207,7 +207,7 @@ impl IterBfsElement for &MetaToken {
             MetaToken::Group { tokens, .. } => queue.extend(tokens.0.iter()),
             MetaToken::MetaCast(metacast) => {
                 queue.extend(metacast.expr.0.iter());
-                // TODO: make metacast.as_token an Ident so it can be added in the BFS
+                // TODO: Not needed right now, but maybe later: Make metacast.as_token an Ident so it can be added in the BFS.
                 queue.extend(metacast.ty.0.iter());
             },
             // No children

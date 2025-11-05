@@ -7,7 +7,7 @@ use proc_macro2::{Group, Delimiter, Ident, Punct, Spacing, Span, TokenStream, To
 use syn::{Type, braced, parse::{Parse, ParseStream}, token::Brace};
 use stream::MetaTokenStream;
 use token::{MetaToken, MetaVar, MetaCast, MetaCastType};
-pub use parse::type_to_metatokens;
+pub use parse::parse_metacast;
 
 /// Akin to an [`Expr`][syn::Expr], a [`MetaExpr`] is an expression of rust code that contains a *type* **metavariable** that must be resolved to a *concrete type*.
 ///
