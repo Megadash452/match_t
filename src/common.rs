@@ -11,6 +11,11 @@ pub fn type_of_tokens(ty: &Type) -> TokenStream {
 #[derive(Clone)]
 pub struct Condition(Punctuated<Type, Token![|]>);
 impl Condition {
+    /// Returns an iterator over **references** of [`Type`].
+    pub fn iter(&self) -> <&Self as IntoIterator>::IntoIter {
+        self.0.iter()
+    }
+
     /// Generate a `boolean` [`Condition`] that compares `T` with all [`Types`][Type] in `Self` for use in an `if` statement.
     ///
     /// **eq_span** is the [`Span`] that will be assigned to the *equal signs* (`==`) in the condition.

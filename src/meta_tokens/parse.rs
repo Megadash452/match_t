@@ -573,9 +573,12 @@ fn parse_metacast_type(
         match fork.next() {
             Some(tt) => match tt {
                 // Found group: only the group is the type.
-                TokenTree::Group(group) => Ok(MetaTokenStream::from(vec![
-                    MetaToken::from_group(group, |stream| parse_group(stream, found_metavar, metavar_name))?
-                ])),
+                TokenTree::Group(group) => {
+                    *token_iter = fork;
+                    Ok(MetaTokenStream::from(vec![
+                        MetaToken::from_group(group, |stream| parse_group(stream, found_metavar, metavar_name))?
+                    ]))
+                },
                 TokenTree::Ident(ident) => match ident.to_string().as_str() {
                     "for" => parse_fn(token_iter, found_metavar, metavar_name),
                     "fn" => parse_fn(token_iter, found_metavar, metavar_name),
@@ -717,6 +720,8 @@ mod tests {
             quote! { [[$T; N]; N] },
             quote! { [$T] },
             quote! { [[$T]] },
+            quote! { &[$T] },
+            quote! { &[&[$T]] },
             quote! { fn(usize, $T) -> bool },
             quote! { fn() -> $T },
             quote! { syn::Token![$T] },

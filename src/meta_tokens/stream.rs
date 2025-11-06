@@ -162,8 +162,9 @@ pub fn metacast_to_token_stream(
        So casting something like `[T]` to `[resolved_ty]` is safe. */
     // Taken from https://github.com/funnsam/stable-intrinsics/blob/586a139ccb758488f109daf5165ecef574723b3e/src/lib.rs#L170
     quote! { {
-        let __value = (#value);
+        let __value: #from_ty = (#value);
         unsafe {
+            let __value = __value;
             let __dst = ::core::mem::transmute::<*const #from_ty, *const #to_ty>(&(__value) as *const _);
             ::core::mem::forget(__value);
             ::core::ptr::read(__dst)

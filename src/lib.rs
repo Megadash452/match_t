@@ -338,39 +338,48 @@ mod tests {
 
     static COMMON_METACAST_OUTER: LazyLock<String> = LazyLock::new(|| {
         quote! {
-            if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<bool>() {
-                let __result = { [{
-                    let __value = (val);
-                    unsafe {
-                        let __dst = ::core::mem::transmute::<*const T, *const bool>(&(__value) as *const _);
-                        ::core::mem::forget(__value);
-                        ::core::ptr::read(__dst)
-                    }
-                }; 5] };
+            if ::std::any::TypeId::of::<T>() ==::std::any::TypeId::of::<bool>() {
+                let __result = {
+                    [{
+                        let __value: T = (val);
+                        unsafe {
+                            let __value = __value;
+                            let __dst = ::core::mem::transmute::<*const T, *const bool>(&(__value) as *const _);
+                            ::core::mem::forget(__value);
+                            ::core::ptr::read(__dst)
+                        }
+                    }; 5]
+                };
                 {
-                    let __value = (__result);
+                    let __value: [bool; 5] = (__result);
                     unsafe {
+                        let __value = __value;
                         let __dst = ::core::mem::transmute::<*const [bool; 5], *const [T; 5]>(&(__value) as *const _);
                         ::core::mem::forget(__value);
                         ::core::ptr::read(__dst)
                     }
                 }
-            } else if ::std::any::TypeId::of::<T>() == ::std::any::TypeId::of::<char>() {
-                let __result = { [{
-                    let __value = (val);
-                    unsafe {
-                        let __dst = ::core::mem::transmute::<*const T, *const char>(&(__value) as *const _);
-                        ::core::mem::forget(__value);
-                        ::core::ptr::read(__dst)
-                    } }; 5] };
-                    {
-                        let __value = (__result);
+            } else if ::std::any::TypeId::of::<T>() ==::std::any::TypeId::of::<char>() {
+                let __result = {
+                    [{
+                        let __value: T = (val);
                         unsafe {
-                            let __dst = ::core::mem::transmute::<*const [char; 5], *const [T; 5]>(&(__value) as *const _);
+                            let __value = __value;
+                            let __dst = ::core::mem::transmute::<*const T, *const char>(&(__value) as *const _);
                             ::core::mem::forget(__value);
                             ::core::ptr::read(__dst)
                         }
+                    }; 5]
+                };
+                {
+                    let __value: [char; 5] = (__result);
+                    unsafe {
+                        let __value = __value;
+                        let __dst = ::core::mem::transmute::<*const [char; 5], *const [T; 5]>(&(__value) as *const _);
+                        ::core::mem::forget(__value);
+                        ::core::ptr::read (__dst)
                     }
+                }
             } else {
                 panic!("Incorrect type")
             }

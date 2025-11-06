@@ -18,7 +18,7 @@ pub struct Match {
 }
 impl Match {
     /// Directly converts the [`Match`] statement to an equivalent [`If`] statement.
-    fn to_if(&self) -> syn::Result<If> {
+    pub fn to_if(&self) -> syn::Result<If> {
         // Exit if there are no conditions/blocks to output
         // Also can't convert it if it only one default arm
         if self.arms.is_empty() /* && self.default_case_arm.is_none() */ {

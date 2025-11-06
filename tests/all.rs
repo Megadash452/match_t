@@ -42,6 +42,32 @@ fn metacast() {
     }
     assert_eq!(my_fn::<u8>(0), None);
     assert_eq!(my_fn::<i8>(0), Some(0));
+    assert_eq!(my_fn::<()>(()), None);
+}
+
+#[test]
+fn metacast_slice() {
+    fn bool_fn(slice: &[bool], len: usize) {
+        println!("Slice {slice:?}, len = {len}");
+    }
+
+    fn my_fn<T: Any>(slice: &[T]) {
+        match_t::match_t! {
+            match T {
+                bool => bool_fn(slice $as &[$T], slice.len()),
+                &bool => {
+                    let array = (slice $as &[$T]).iter()
+                        .map(|prim| **prim)
+                        .collect::<Box<[_]>>();
+                    bool_fn(&array, array.len())
+                },
+                _ => { },
+            }
+        }
+    }
+    my_fn(&[true, false]);
+    my_fn(&[&true, &false]);
+    my_fn(&[()]);
 }
 
 #[test]
@@ -62,7 +88,7 @@ fn metacast_deep() {
     }
     assert_eq!(my_fn::<u8>(0), Ok(None));
     assert_eq!(my_fn::<i8>(0), Ok(Some(vec![0].into_boxed_slice())));
-    assert_eq!(my_fn::<String>(String::new()), Err("Unexpected type"));
+    assert_eq!(my_fn::<()>(()), Err("Unexpected type"));
 }
 
 /// Each else-if clause in the if statement can reference a different generic type.
@@ -81,4 +107,5 @@ fn if_multiple_metavars() {
     }
     my_fn::<bool, String>();
     my_fn::<String, u128>();
+    my_fn::<(), ()>();
 }
